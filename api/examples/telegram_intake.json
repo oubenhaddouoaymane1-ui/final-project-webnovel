@@ -1,0 +1,40 @@
+{
+  "update_id": 123456789,
+  "message": {
+    "message_id": 42,
+    "from": {
+      "id": 987654321,
+      "is_bot": false,
+      "first_name": "Alice",
+      "last_name": "Writer",
+      "username": "alice_writer",
+      "language_code": "en"
+    },
+    "chat": {
+      "id": 987654321,
+      "first_name": "Alice",
+      "last_name": "Writer",
+      "username": "alice_writer",
+      "type": "private"
+    },
+    "date": 1722000000,
+    "text": "/new_project The Medieval Chronicles",
+    "entities": [
+      {
+        "type": "bot_command",
+        "offset": 0,
+        "length": 12
+      }
+    ]
+  },
+  "project_context": {
+    "project_id": "proj-01H8X9A3B",
+    "user_id": "tg-987654321",
+    "intent": "new_project",
+    "metadata": {
+      "bot_version": "1.0.0",
+      "webhook_received_at": "2026-07-26T08:00:00Z",
+      "processing_node": "n8n-01"
+    }
+  }
+}

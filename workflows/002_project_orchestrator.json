@@ -1,0 +1,2358 @@
+{
+  "name": "002_project_orchestrator",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "orchestrator",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "node-01-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "webhookId": "orchestrator"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 60
+            }
+          ]
+        }
+      },
+      "id": "node-01-cron",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1,
+      "position": [250, 500]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_id, current_state, previous_state, retry_count, error_count, last_error, last_state_change_at, checkpoint_data, config, progress, title FROM cineos_core.projects WHERE project_id = $1",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id || $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-02-load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [450, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.current_state }}",
+              "operation": "equals",
+              "value2": "completed"
+            },
+            {
+              "value1": "={{ $json.current_state }}",
+              "operation": "equals",
+              "value2": "cancelled"
+            },
+            {
+              "value1": "={{ $json.current_state }}",
+              "operation": "equals",
+              "value2": "failed"
+            }
+          ]
+        },
+        "combineOperation": "any"
+      },
+      "id": "node-03-state-validator",
+      "name": "Terminal State Check",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [650, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'terminal', state: $json.current_state, project_id: $json.project_id }) }}"
+      },
+      "id": "node-30-terminal-exit",
+      "name": "Terminal Exit",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [850, 200]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "received"
+                  }
+                ]
+              },
+              "output": 0,
+              "renameOutput": "VALIDATE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "validated"
+                  }
+                ]
+              },
+              "output": 1,
+              "renameOutput": "PARSE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "parsed"
+                  }
+                ]
+              },
+              "output": 2,
+              "renameOutput": "INTELLIGENCE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "understood"
+                  }
+                ]
+              },
+              "output": 3,
+              "renameOutput": "BIBLES"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "biblified"
+                  }
+                ]
+              },
+              "output": 4,
+              "renameOutput": "CHARACTERS"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "characterized"
+                  }
+                ]
+              },
+              "output": 5,
+              "renameOutput": "WORLD"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "worldbuilt"
+                  }
+                ]
+              },
+              "output": 6,
+              "renameOutput": "TIMELINE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "timeline_verified"
+                  }
+                ]
+              },
+              "output": 7,
+              "renameOutput": "SCENE_PLAN"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "planned"
+                  }
+                ]
+              },
+              "output": 8,
+              "renameOutput": "SHOT_PLAN"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "prompted"
+                  }
+                ]
+              },
+              "output": 9,
+              "renameOutput": "QUEUE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "queued"
+                  }
+                ]
+              },
+              "output": 10,
+              "renameOutput": "GENERATE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "generating"
+                  }
+                ]
+              },
+              "output": 11,
+              "renameOutput": "CHECK_GENERATION"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "generated"
+                  }
+                ]
+              },
+              "output": 12,
+              "renameOutput": "QUALITY"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "reviewing"
+                  }
+                ]
+              },
+              "output": 13,
+              "renameOutput": "CHECK_REVIEW"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "repairing"
+                  }
+                ]
+              },
+              "output": 14,
+              "renameOutput": "CHECK_REPAIR"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "approved"
+                  }
+                ]
+              },
+              "output": 15,
+              "renameOutput": "VOICE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "voiced"
+                  }
+                ]
+              },
+              "output": 16,
+              "renameOutput": "MUSIC"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "musicked"
+                  }
+                ]
+              },
+              "output": 17,
+              "renameOutput": "ANIMATE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "animated"
+                  }
+                ]
+              },
+              "output": 18,
+              "renameOutput": "RENDER"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "rendering"
+                  }
+                ]
+              },
+              "output": 19,
+              "renameOutput": "CHECK_RENDER"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "rendered"
+                  }
+                ]
+              },
+              "output": 20,
+              "renameOutput": "FINAL_REVIEW"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "super_resolution"
+                  }
+                ]
+              },
+              "output": 21,
+              "renameOutput": "SUPER_RES"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "final_review"
+                  }
+                ]
+              },
+              "output": 22,
+              "renameOutput": "CHECK_FINAL"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "delivered"
+                  }
+                ]
+              },
+              "output": 23,
+              "renameOutput": "LEARN"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "learned"
+                  }
+                ]
+              },
+              "output": 24,
+              "renameOutput": "COMPLETE"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "retrying"
+                  }
+                ]
+              },
+              "output": 25,
+              "renameOutput": "RETRY"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "waiting"
+                  }
+                ]
+              },
+              "output": 26,
+              "renameOutput": "WAIT"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.current_state }}",
+                    "operation": "equals",
+                    "value2": "paused"
+                  }
+                ]
+              },
+              "output": 27,
+              "renameOutput": "PAUSE"
+            }
+          ]
+        },
+        "fallbackOutput": 28
+      },
+      "id": "node-06-state-router",
+      "name": "State Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [850, 400]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'validated', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-validate",
+      "name": "Transition to Validated",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 100],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'parsed', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-parse",
+      "name": "Transition to Parsed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 200],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'understood', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-intelligence",
+      "name": "Transition to Understood",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'biblified', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-bibles",
+      "name": "Transition to Biblified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 400],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'characterized', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-characters",
+      "name": "Transition to Characterized",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 500],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'worldbuilt', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-world",
+      "name": "Transition to Worldbuilt",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 600],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'timeline_verified', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-timeline",
+      "name": "Transition to Timeline Verified",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 700],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'planned', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-scene-plan",
+      "name": "Transition to Planned",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 800],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'prompted', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-shot-plan",
+      "name": "Transition to Prompted",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 900],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'queued', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-queue",
+      "name": "Transition to Queued",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1000],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'generating', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-generate",
+      "name": "Transition to Generating",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1100],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'generated', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-generated",
+      "name": "Transition to Generated",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1200],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'reviewing', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-reviewing",
+      "name": "Transition to Reviewing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'repairing', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-repairing",
+      "name": "Transition to Repairing",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1400],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'approved', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-approved",
+      "name": "Transition to Approved",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1500],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'voiced', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-voiced",
+      "name": "Transition to Voiced",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1600],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'musicked', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-musicked",
+      "name": "Transition to Musicked",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1700],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'animated', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-animated",
+      "name": "Transition to Animated",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1800],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'rendering', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-rendering",
+      "name": "Transition to Rendering",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 1900],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'rendered', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-rendered",
+      "name": "Transition to Rendered",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 2000],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'super_resolution', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-super-resolution",
+      "name": "Transition to Super Resolution",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 2100],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'final_review', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-final-review",
+      "name": "Transition to Final Review",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 2200],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'delivered', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-delivered",
+      "name": "Transition to Delivered",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 2300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'learned', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW() WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-learned",
+      "name": "Transition to Learned",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 2400],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'completed', previous_state = current_state, last_state_change_at = NOW(), updated_at = NOW(), completed_at = NOW(), progress = 1.0 WHERE project_id = $1 AND current_state = $2 RETURNING project_id, current_state",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-07-transition-completed",
+      "name": "Transition to Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1100, 2500],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cineos_core.state_log (project_id, entity_type, entity_id, old_state, new_state, workflow, operator, reason, created_at) VALUES ($1, 'project', $1, $2, $3, 'project_orchestrator', 'system', $4, NOW())",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.previous_state }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              },
+              {
+                "value": "State transition triggered by orchestrator"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-08-log-state-change",
+      "name": "Log State Change",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1300, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cineos_core.events (project_id, event_type, workflow, state_before, state_after, severity, message, payload, created_at) VALUES ($1, $2, 'project_orchestrator', $3, $4, 'info', $5, $6, NOW())",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "PROJECT_STATE_CHANGED"
+              },
+              {
+                "value": "={{ $json.previous_state }}"
+              },
+              {
+                "value": "={{ $json.current_state }}"
+              },
+              {
+                "value": "Project transitioned from {{ $json.previous_state }} to {{ $json.current_state }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ trigger_event: $json.trigger_event }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-08-emit-event",
+      "name": "Emit State Change Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1500, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/003_project_validator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-11-dispatch-validate",
+      "name": "Dispatch: Validate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/004_story_parser",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-12-dispatch-parse",
+      "name": "Dispatch: Parse",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/005_story_intelligence",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-13-dispatch-intelligence",
+      "name": "Dispatch: Intelligence",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/006_story_bible_builder",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-14-dispatch-bibles",
+      "name": "Dispatch: Bibles",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/007_character_engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-15-dispatch-characters",
+      "name": "Dispatch: Characters",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/008_world_engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-16-dispatch-world",
+      "name": "Dispatch: World",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/009_timeline_engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-17-dispatch-timeline",
+      "name": "Dispatch: Timeline",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/010_scene_planner",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-18-dispatch-scene-plan",
+      "name": "Dispatch: Scene Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 800]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/011_shot_planner",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-19-dispatch-shot-plan",
+      "name": "Dispatch: Shot Plan",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 900]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/015_job_dispatcher",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-20-dispatch-queue",
+      "name": "Dispatch: Queue Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1000]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/017_image_generation",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-21-dispatch-generate",
+      "name": "Dispatch: Generate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/018_quality_ai",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-22-dispatch-quality",
+      "name": "Dispatch: Quality Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/019_repair_engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-23-dispatch-repair",
+      "name": "Dispatch: Repair",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/020_voice_engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-22-dispatch-voice",
+      "name": "Dispatch: Voice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1400]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/021_music_director",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-23-dispatch-music",
+      "name": "Dispatch: Music",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1500]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/022_animation_engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-24-dispatch-animate",
+      "name": "Dispatch: Animate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1600]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/023_render_manager",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-25-dispatch-render",
+      "name": "Dispatch: Render",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1700]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/024_super_resolution",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-26-dispatch-super-res",
+      "name": "Dispatch: Super Resolution",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1800]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/025_final_review",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-27-dispatch-final-review",
+      "name": "Dispatch: Final Review",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 1900]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/026_delivery",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-28-dispatch-delivery",
+      "name": "Dispatch: Delivery",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 2000]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=http://localhost:5678/webhook/027_learning_engine",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-29-dispatch-learn",
+      "name": "Dispatch: Learn",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [1700, 2100]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'dispatched', project_id: $json.project_id, state: $json.current_state }) }}"
+      },
+      "id": "node-40-respond",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [1900, 300]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Terminal State Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminal State Check": {
+      "main": [
+        [
+          {
+            "node": "Terminal Exit",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "State Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "State Router": {
+      "main": [
+        [
+          {
+            "node": "Transition to Validated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Parsed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Understood",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Biblified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Characterized",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Worldbuilt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Timeline Verified",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Planned",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Prompted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Queued",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Generating",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Generated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Reviewing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Repairing",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Approved",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Voiced",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Musicked",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Animated",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Rendering",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Rendered",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Super Resolution",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Final Review",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Delivered",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Learned",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Validated": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Parsed": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Understood": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Biblified": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Characterized": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Worldbuilt": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Timeline Verified": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Planned": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Prompted": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Queued": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Generating": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Generated": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Reviewing": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Repairing": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Approved": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Voiced": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Musicked": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Animated": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Rendering": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Rendered": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Super Resolution": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Final Review": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Delivered": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Learned": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Completed": {
+      "main": [
+        [
+          {
+            "node": "Log State Change",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log State Change": {
+      "main": [
+        [
+          {
+            "node": "Emit State Change Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit State Change Event": {
+      "main": [
+        [
+          {
+            "node": "Dispatch: Validate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dispatch: Validate": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos"
+    },
+    {
+      "name": "orchestrator"
+    },
+    {
+      "name": "master"
+    }
+  ]
+}

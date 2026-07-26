@@ -1,0 +1,59 @@
+# Telegram Bot Configuration
+bot:
+  token: "${TELEGRAM_BOT_TOKEN}"
+  name: "CineOS Bot"
+  description: "Novel to Cinematic Video Production Bot"
+
+limits:
+  max_file_size_mb: 50
+  min_words: 50
+  max_words: 500000
+  allowed_extensions:
+    - ".txt"
+    - ".md"
+  max_active_projects_per_user: 1
+  cooldown_seconds: 60
+
+messages:
+  welcome: |
+    🎬 Welcome to CineOS!
+    
+    Send me a novel (.txt file) and I'll create a cinematic video.
+    
+    Commands:
+    /status - Check project status
+    /cancel - Cancel current project
+    /help - Show this help
+  help: |
+    📖 How to use CineOS:
+    
+    1. Send me a .txt file with your novel
+    2. Wait for processing (may take hours)
+    3. Receive your cinematic video
+    
+    Limits: 50-500,000 words, UTF-8 text
+    
+    Commands:
+    /status - Check project status
+    /cancel - Cancel current project
+  progress_template: |
+    📊 Project: {title}
+    State: {state}
+    Progress: {progress}%
+    Scenes: {scenes_completed}/{scenes_total}
+  delivery_message: |
+    ✅ Your cinematic video is ready!
+    
+    📁 File: {filename}
+    ⏱️ Duration: {duration}
+    🎬 Scenes: {scene_count}
+    
+    Thank you for using CineOS!
+
+notifications:
+  on_project_created: true
+  on_state_change: false
+  on_progress_milestone: true
+  milestone_intervals: [25, 50, 75, 100]
+  on_delivery: true
+  on_failure: true

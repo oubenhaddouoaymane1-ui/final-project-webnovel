@@ -1,0 +1,112 @@
+##############################################################################
+# CineOS — Fly.io Deployment Configuration
+# Deploy with: fly deploy
+##############################################################################
+
+app = "cineos"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SERVICE_NAME = "cineos"
+  LOG_LEVEL = "INFO"
+  TZ = "UTC"
+
+# ── PostgreSQL (Fly Postgres) ──────────────────────────────────────────────
+
+[[services]]
+  internal_port = 5432
+  protocol = "tcp"
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 25
+    soft_limit = 20
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# ── Redis (Fly Redis) ─────────────────────────────────────────────────────
+
+[[services]]
+  internal_port = 6379
+  protocol = "tcp"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "128mb"
+
+# ── n8n ────────────────────────────────────────────────────────────────────
+
+[[services]]
+  internal_port = 5678
+  protocol = "tcp"
+
+  [[services.ports]]
+    handlers = ["http", "tls"]
+    port = 443
+
+  [[services.ports]]
+    handlers = ["tls"]
+    port = 80
+
+[env]
+  N8N_PROTOCOL = "https"
+  N8N_PORT = "5678"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "512mb"
+
+# ── Cloud Bridge ───────────────────────────────────────────────────────────
+
+[[services]]
+  internal_port = 8600
+  protocol = "tcp"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# ── Supervisor ─────────────────────────────────────────────────────────────
+
+[[services]]
+  internal_port = 8000
+  protocol = "tcp"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# ── Render Worker ──────────────────────────────────────────────────────────
+
+[[services]]
+  internal_port = 8300
+  protocol = "tcp"
+
+[[vm]]
+  size = "shared-cpu-2x"
+  memory = "512mb"
+
+# ── Voice Worker ───────────────────────────────────────────────────────────
+
+[[services]]
+  internal_port = 8400
+  protocol = "tcp"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"
+
+# ── Telegram Bot ───────────────────────────────────────────────────────────
+
+[[services]]
+  internal_port = 8080
+  protocol = "tcp"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

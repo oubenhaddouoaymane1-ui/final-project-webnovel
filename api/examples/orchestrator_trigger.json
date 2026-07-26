@@ -1,0 +1,27 @@
+{
+  "project_id": "proj-01H8X9A3B",
+  "trigger_stage": "render",
+  "force": false,
+  "config_overrides": {
+    "image_backend": "pollinations",
+    "tts_backend": "edge_tts",
+    "max_concurrent": 4,
+    "quality_threshold": 7.0,
+    "output_resolution": "1920x1080"
+  },
+  "callback_url": "https://n8n.cineos.dev/webhook/render_callback",
+  "metadata": {
+    "triggered_by": "n8n-workflow-002",
+    "trigger_reason": "prompt_plan_stage_completed",
+    "pipeline_run_id": "run-01H8X9A3B",
+    "previous_stage_duration_seconds": 342.5,
+    "queued_at": "2026-07-26T09:05:00Z",
+    "priority": 5
+  },
+  "resource_allocation": {
+    "preferred_worker_types": ["image_worker", "voice_worker"],
+    "max_image_workers": 2,
+    "max_voice_workers": 1,
+    "timeout_override_seconds": 600
+  }
+}

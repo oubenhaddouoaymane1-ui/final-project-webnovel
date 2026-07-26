@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/voice_request.json",
+  "title": "Voice Generation Request",
+  "description": "Request body for the POST /api/generate/voice endpoint.",
+  "type": "object",
+  "required": ["text"],
+  "properties": {
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 10000,
+      "description": "Text to synthesize into speech. Supports SSML tags for advanced control."
+    },
+    "scene_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Optional scene reference for tracking and duration alignment."
+    },
+    "voice": {
+      "type": "string",
+      "nullable": true,
+      "description": "Voice identifier. Backend-specific — see documentation for available voices.",
+      "examples": ["en-US-GuyNeural", "en-US-AriaNeural", "en-GB-RyanNeural"]
+    },
+    "speed": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 2.0,
+      "default": 1.0,
+      "description": "Speech rate multiplier. 1.0 = normal speed."
+    },
+    "pitch": {
+      "type": "number",
+      "minimum": -50,
+      "maximum": 50,
+      "default": 0,
+      "description": "Pitch adjustment in Hz. 0 = default."
+    },
+    "volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 2.0,
+      "default": 1.0,
+      "description": "Volume multiplier."
+    },
+    "emotion": {
+      "type": "string",
+      "enum": ["neutral", "happy", "sad", "angry", "dramatic", "whisper", "narrator"],
+      "default": "neutral",
+      "description": "Emotional tone — affects voice selection and prosody."
+    },
+    "backend_preference": {
+      "type": "string",
+      "nullable": true,
+      "description": "Preferred TTS backend. Falls back to priority list if unavailable.",
+      "examples": ["edge_tts", "piper", "espeak"]
+    },
+    "callback_url": {
+      "type": "string",
+      "format": "uri",
+      "nullable": true,
+      "description": "URL to POST the result to when generation completes."
+    },
+    "output_format": {
+      "type": "string",
+      "enum": ["mp3", "wav", "ogg", "opus"],
+      "default": "mp3",
+      "description": "Audio output format."
+    },
+    "sample_rate": {
+      "type": "integer",
+      "enum": [8000, 16000, 22050, 24000, 44100, 48000],
+      "default": 24000,
+      "description": "Output sample rate in Hz."
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "text": "The ancient castle stood tall against the crimson sky, its towers piercing the clouds like the fingers of a sleeping giant.",
+      "scene_id": "scn-01H8X9A3B",
+      "voice": "en-US-GuyNeural",
+      "speed": 1.0,
+      "pitch": 0,
+      "volume": 1.0,
+      "emotion": "dramatic",
+      "backend_preference": "edge_tts",
+      "callback_url": "https://n8n.cineos.dev/webhook/render_callback",
+      "output_format": "mp3",
+      "sample_rate": 24000
+    }
+  ]
+}

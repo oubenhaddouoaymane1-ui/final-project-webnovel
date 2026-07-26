@@ -1,0 +1,128 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/worker.json",
+  "title": "Worker",
+  "description": "A compute worker registered with the CineOS platform.",
+  "type": "object",
+  "required": ["worker_id", "worker_type", "hostname", "status", "capabilities"],
+  "properties": {
+    "worker_id": {
+      "type": "string",
+      "description": "Unique worker identifier assigned at registration",
+      "examples": ["wk-01H8X9A3B"]
+    },
+    "worker_type": {
+      "type": "string",
+      "enum": ["image_worker", "voice_worker", "animation_worker", "render_worker", "quality_worker", "supervisor"],
+      "description": "Primary role of this worker",
+      "examples": ["image_worker"]
+    },
+    "hostname": {
+      "type": "string",
+      "description": "Network hostname of the machine running this worker",
+      "examples": ["gpu-node-01"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["online", "offline", "busy", "draining"],
+      "description": "Current operational status",
+      "examples": ["online"]
+    },
+    "capabilities": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "List of specific capabilities this worker supports",
+      "examples": [["image_generation", "upscaling"]]
+    },
+    "max_concurrent_jobs": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64,
+      "description": "Maximum number of jobs this worker can process simultaneously",
+      "examples": [4]
+    },
+    "current_job_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of jobs currently being processed",
+      "examples": [1]
+    },
+    "last_heartbeat": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp of the last received heartbeat",
+      "examples": ["2026-07-26T10:15:30Z"]
+    },
+    "heartbeat_interval_seconds": {
+      "type": "integer",
+      "description": "Expected interval between heartbeats in seconds",
+      "default": 30,
+      "examples": [30]
+    },
+    "registered_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Timestamp when the worker was first registered",
+      "examples": ["2026-07-26T08:00:00Z"]
+    },
+    "total_jobs_completed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Lifetime count of successfully completed jobs",
+      "examples": [142]
+    },
+    "total_jobs_failed": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Lifetime count of failed jobs",
+      "examples": [3]
+    },
+    "average_job_duration_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "nullable": true,
+      "description": "Rolling average of job completion time",
+      "examples": [12.4]
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "Arbitrary metadata — GPU model, VRAM, software versions, etc.",
+      "examples": [
+        {
+          "gpu_model": "NVIDIA RTX 4090",
+          "vram_gb": 24,
+          "cuda_version": "12.2",
+          "driver_version": "535.129.03",
+          "python_version": "3.11.5",
+          "torch_version": "2.1.0"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "worker_id": "wk-01H8X9A3B",
+      "worker_type": "image_worker",
+      "hostname": "gpu-node-01",
+      "status": "online",
+      "capabilities": ["image_generation", "upscaling"],
+      "max_concurrent_jobs": 4,
+      "current_job_count": 1,
+      "last_heartbeat": "2026-07-26T10:15:30Z",
+      "heartbeat_interval_seconds": 30,
+      "registered_at": "2026-07-26T08:00:00Z",
+      "total_jobs_completed": 142,
+      "total_jobs_failed": 3,
+      "average_job_duration_seconds": 12.4,
+      "metadata": {
+        "gpu_model": "NVIDIA RTX 4090",
+        "vram_gb": 24,
+        "cuda_version": "12.2"
+      }
+    }
+  ]
+}

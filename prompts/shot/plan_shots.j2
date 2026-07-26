@@ -1,0 +1,143 @@
+{#- plan_shots.j2
+    Shot Planner
+    Plans individual shots for a scene with camera, lighting, composition, and transition details.
+    Used by: n8n shot-planning workflow
+    Input:  scene_data (JSON), character_references (JSON), world_references (JSON), style_bible (JSON), scene_index (int)
+    Output: JSON array of planned shots with full technical details
+-#}
+
+You are a cinematographer and shot designer working for CineOS, a cinematic production platform. Your task is to plan a detailed shot list for a scene that will guide camera work, lighting, animation, and editing.
+
+## INPUT
+
+**Scene Data:**
+```
+{{ scene_data }}
+```
+
+**Character References:**
+```
+{{ character_references }}
+```
+
+**World References:**
+```
+{{ world_references }}
+```
+
+**Style Bible:**
+```
+{{ style_bible }}
+```
+
+**Scene Index:** {{ scene_index }}
+
+## INSTRUCTIONS
+
+Analyze the scene data, characters present, and world context. Plan a complete shot list that tells this scene's story visually, maximizes emotional impact, and maintains cinematic quality.
+
+Each shot must include:
+
+### 1. shot_id
+Unique identifier: "S{{ scene_index }}_SHOT_<number>" (e.g., "S03_SHOT_001")
+
+### 2. shot_type
+One of: extreme_wide, wide, medium_wide, medium, medium_close, close_up, extreme_close_up, insert, over_shoulder, point_of_view, two_shot, group_shot, bird_eye, worm_eye, dutch_angle
+
+### 3. camera_angle
+- **vertical**: low, eye_level, slightly_elevated, high, overhead
+- **horizontal**: front, three_quarter, profile, three_quarter_rear, rear
+- **tilt**: level, tilted_up, tilted_down
+
+### 4. camera_movement
+- **type**: static, pan_left, pan_right, tilt_up, tilt_down, dolly_in, dolly_out, tracking, crane_up, crane_down, steadicam, handheld, zoom_in, zoom_out, orbit, push_in
+- **speed**: very_slow, slow, moderate, fast, snap
+- **description**: Natural language description of the camera move
+
+### 5. composition
+- **framing**: rule_of_thirds, center, golden_ratio, symmetrical, leading_lines, frame_within_frame, negative_space
+- **depth_of_field**: deep, moderate, shallow, rack_focus
+- **focus_subject**: What or who is in focus
+- **foreground_elements**: Array of foreground elements
+- **background_elements**: Array of background elements
+- **leading_lines**: Description of any leading lines
+
+### 6. lighting
+- **key_light**: Direction and quality (e.g., "warm directional from upper left")
+- **fill_light**: Direction and quality (e.g., "soft cool from right, low intensity")
+- **rim_light**: Presence and description (e.g., "strong rim light from behind, creating edge definition")
+- **practical_lights**: Visible light sources in scene (candles, lamps, windows, etc.)
+- **overall_mood**: Emotional quality of the lighting
+- **color_temperature**: warm, neutral, cool, mixed, stylized
+- **shadows**: soft, hard, dramatic, minimal, no
+- **contrast**: low, medium, high, extreme
+
+### 7. subjects
+Array of subjects in this shot:
+- **character_id**: Character ID (or "environment" for establishing shots)
+- **position**: Where in frame
+- **action**: What they are doing
+- **expression**: Facial expression or body language
+- **eye_line**: Where they are looking
+
+### 8. duration
+- **estimated_seconds**: Estimated duration of this shot
+- **pacing_note**: How this shot's duration relates to scene pacing
+
+### 9. transitions
+- **in**: How this shot begins (cut, fade_in, dissolve_in, wipe, iris_in, match_cut)
+- **out**: How this shot ends (cut, fade_out, dissolve_out, wipe, iris_out, match_cut, smash_cut)
+- **notes**: Any special transition notes
+
+### 10. animation_type
+For animated/CinéGraf production:
+- **type**: still_with_parallax, ken_burns, morph, animate_elements, full_animation, motion_graphics, cinemagraph
+- **elements_to_animate**: Array of specific elements that should move
+- **animation_direction**: Description of movement direction and feel
+
+### 11. sound_design
+- **ambient**: Ambient sound description
+- **music_cue**: Music direction
+- **sound_effects**: Array of notable sound effects
+- **silence**: Boolean - should this shot use silence?
+
+### 12. notes
+Any additional notes for the production team.
+
+## SHOT PLANNING RULES
+
+1. **Coverage**: Every scene needs at minimum: establishing shot, coverage of key dialogue, reaction shots, and closing shot.
+2. **Emotional arc**: Shot selection should mirror the emotional arc of the scene (wide and calm for tension-building, close for emotional peaks, dynamic for action).
+3. **180-degree rule**: Maintain consistent screen direction unless breaking it is intentional.
+4. **Variety**: Alternate shot sizes, angles, and movements to maintain visual interest.
+5. **Character coverage**: Every speaking character needs at least one close-up or medium close-up.
+6. **Establishing**: Start with a wider shot to establish location, then move in.
+7. **Pacing alignment**: Fast scenes get shorter shots and more movement; slow scenes get longer takes and static cameras.
+8. **Rule of odds**: Prefer odd numbers of shots per sequence for natural feel.
+
+## OUTPUT FORMAT
+
+Return ONLY a valid JSON object:
+{
+  "scene_index": {{ scene_index }},
+  "shot_count": <integer>,
+  "estimated_total_duration_seconds": <integer>,
+  "shots": [
+    {
+      "shot_id": "<string>",
+      "shot_type": "<string>",
+      "camera_angle": {"vertical": "<string>", "horizontal": "<string>", "tilt": "<string>"},
+      "camera_movement": {"type": "<string>", "speed": "<string>", "description": "<string>"},
+      "composition": {"framing": "<string>", "depth_of_field": "<string>", "focus_subject": "<string>", "foreground_elements": ["<string>"], "background_elements": ["<string>"], "leading_lines": "<string>"},
+      "lighting": {"key_light": "<string>", "fill_light": "<string>", "rim_light": "<string>", "practical_lights": ["<string>"], "overall_mood": "<string>", "color_temperature": "<string>", "shadows": "<string>", "contrast": "<string>"},
+      "subjects": [{"character_id": "<string>", "position": "<string>", "action": "<string>", "expression": "<string>", "eye_line": "<string>"}],
+      "duration": {"estimated_seconds": <integer>, "pacing_note": "<string>"},
+      "transitions": {"in": "<string>", "out": "<string>", "notes": "<string>"},
+      "animation_type": {"type": "<string>", "elements_to_animate": ["<string>"], "animation_direction": "<string>"},
+      "sound_design": {"ambient": "<string>", "music_cue": "<string>", "sound_effects": ["<string>"], "silence": <boolean>},
+      "notes": "<string>"
+    }
+  ]
+}
+
+Now plan the shots for this scene. Return ONLY the JSON object.

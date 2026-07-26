@@ -1,0 +1,475 @@
+{
+  "name": "003 - Project Validator",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "project/validate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-003",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "project-validate-003"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.*, n.text_content, n.language, n.encoding, n.word_count AS novel_word_count FROM projects p LEFT JOIN novels n ON p.novel_id = n.id WHERE p.id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-project-003",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-has-project",
+              "leftValue": "={{ $json.rows[0].id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-state-003",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const project = $input.first().json.rows[0];\nconst issues = [];\n\nconst text = project.text_content || '';\n\n// Check encoding (UTF-8 validity)\ntry {\n  const encoder = new TextEncoder();\n  const decoded = new TextDecoder('utf-8', { fatal: true });\n  decoded.decode(encoder.encode(text));\n} catch (e) {\n  issues.push('Invalid UTF-8 encoding detected');\n}\n\n// Check language (basic heuristic)\nconst languagePatterns = {\n  'en': /[a-zA-Z]/,\n  'ru': /[а-яА-ЯёЁ]/,\n  'de': /[äöüÄÖÜß]/,\n  'es': /[ñ¿¡áéíóú]/,\n  'fr': /[àâçéèêëîïôùûüÿœ]/\n};\nconst detectedLang = project.language || 'unknown';\n\nif (!languagePatterns[detectedLang] && detectedLang !== 'unknown') {\n  issues.push(`Language '${detectedLang}' does not match text content`);\n}\n\n// Check word count\nconst wordCount = text.split(/\\s+/).filter(w => w.length > 0).length;\nif (wordCount < 1000) {\n  issues.push(`Novel too short: ${wordCount} words (minimum 1000)`);\n}\nif (wordCount > 1000000) {\n  issues.push(`Novel too long: ${wordCount} words (maximum 1,000,000)`);\n}\n\n// Check for empty content\nif (!text || text.trim().length === 0) {\n  issues.push('Novel text content is empty');\n}\n\nconst isValid = issues.length === 0;\n\nreturn [{\n  json: {\n    project_id: project.id,\n    is_valid: isValid,\n    issues: issues,\n    word_count: wordCount,\n    detected_language: detectedLang,\n    encoding_ok: true,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "code-checks-003",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "condition-is-valid",
+              "leftValue": "={{ $json.is_valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-003",
+      "name": "Is Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'validated', validation_result = $2::jsonb, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify($('Execute Logic').item.json) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-success-003",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1320, 200],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'validation_failed', validation_result = $2::jsonb, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ is_valid: false, issues: $('Execute Logic').item.json.issues }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-fail-003",
+      "name": "Update Database (Failed)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1320, 420],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'project_validated', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'validated', word_count: $('Execute Logic').item.json.word_count }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-success-003",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 200],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'project_validation_failed', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'validation_failed', issues: $('Execute Logic').item.json.issues }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-fail-003",
+      "name": "Emit Event (Failed)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 420],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id || $json.project.telegram_chat_id }}",
+        "text": "=✅ Project validated successfully!\n\n📋 Project: {{ $('Execute Logic').item.json.project_id }}\n📊 Word count: {{ $('Execute Logic').item.json.word_count }}\n🌐 Language: {{ $('Execute Logic').item.json.detected_language }}"
+      },
+      "id": "tg-success-003",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1760, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id || $json.project.telegram_chat_id }}",
+        "text": "=❌ Project validation failed!\n\n📋 Project: {{ $('Execute Logic').item.json.project_id }}\n⚠️ Issues:\n{{ $('Execute Logic').item.json.issues.join('\\n') }}"
+      },
+      "id": "tg-fail-003",
+      "name": "Send Progress (Failed)",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1760, 420],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "parsed"
+            },
+            {
+              "name": "current_state",
+              "value": "validated"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orchestrator-success-003",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1980, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'validated', project_id: $('Execute Logic').item.json.project_id, word_count: $('Execute Logic').item.json.word_count }) }}"
+      },
+      "id": "respond-success-003",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2200, 200]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'validation_failed', project_id: $('Execute Logic').item.json.project_id, issues: $('Execute Logic').item.json.issues }) }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "respond-fail-003",
+      "name": "Respond to Webhook (Failed)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1980, 420]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook (Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Is Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Valid?": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Update Database (Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database (Failed)": {
+      "main": [
+        [
+          {
+            "node": "Emit Event (Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event (Failed)": {
+      "main": [
+        [
+          {
+            "node": "Send Progress (Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress (Failed)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook (Failed)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

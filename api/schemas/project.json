@@ -1,0 +1,197 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/project.json",
+  "title": "Project",
+  "description": "A CineOS project representing a novel-to-video pipeline run.",
+  "type": "object",
+  "required": ["id", "novel_id", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique project identifier",
+      "examples": ["proj-01H8X9A3B"]
+    },
+    "novel_id": {
+      "type": "string",
+      "description": "Reference to the source novel",
+      "examples": ["nvl-01H8X9A3B"]
+    },
+    "title": {
+      "type": "string",
+      "description": "Project title (derived from novel or user-specified)",
+      "examples": ["The Medieval Chronicles"]
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "analyzing", "planning", "rendering", "assembling", "auditing", "completed", "failed", "cancelled"],
+      "description": "Current pipeline status",
+      "examples": ["rendering"]
+    },
+    "progress": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Completion percentage",
+      "examples": [65.5]
+    },
+    "current_step": {
+      "type": "string",
+      "nullable": true,
+      "description": "Name of the currently executing pipeline stage",
+      "examples": ["render"]
+    },
+    "error_message": {
+      "type": "string",
+      "nullable": true,
+      "description": "Error message if status is 'failed'"
+    },
+    "config": {
+      "type": "object",
+      "description": "Pipeline configuration overrides for this project",
+      "properties": {
+        "image_backend": {
+          "type": "string",
+          "examples": ["pollinations"]
+        },
+        "tts_backend": {
+          "type": "string",
+          "examples": ["edge_tts"]
+        },
+        "max_concurrent_jobs": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 64,
+          "default": 4
+        },
+        "quality_threshold": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "default": 7.0
+        },
+        "output_resolution": {
+          "type": "string",
+          "enum": ["1280x720", "1920x1080", "3840x2160"],
+          "default": "1920x1080"
+        }
+      },
+      "additionalProperties": true
+    },
+    "stats": {
+      "type": "object",
+      "description": "Aggregate project statistics",
+      "properties": {
+        "total_scenes": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_shots": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_images_generated": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_audio_tracks": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_animations": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "total_video_clips": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "estimated_duration_seconds": {
+          "type": "number",
+          "minimum": 0
+        },
+        "average_quality_score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 10,
+          "nullable": true
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "description": "Final output references",
+      "properties": {
+        "video_path": {
+          "type": "string",
+          "nullable": true
+        },
+        "video_duration_seconds": {
+          "type": "number",
+          "nullable": true
+        },
+        "video_resolution": {
+          "type": "string",
+          "nullable": true
+        },
+        "video_file_size_bytes": {
+          "type": "integer",
+          "nullable": true
+        }
+      }
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 creation timestamp"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 last update timestamp"
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "nullable": true,
+      "description": "ISO 8601 completion timestamp"
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "id": "proj-01H8X9A3B",
+      "novel_id": "nvl-01H8X9A3B",
+      "title": "The Medieval Chronicles",
+      "status": "rendering",
+      "progress": 65.5,
+      "current_step": "render",
+      "error_message": null,
+      "config": {
+        "image_backend": "pollinations",
+        "tts_backend": "edge_tts",
+        "max_concurrent_jobs": 4,
+        "quality_threshold": 7.0,
+        "output_resolution": "1920x1080"
+      },
+      "stats": {
+        "total_scenes": 24,
+        "total_shots": 96,
+        "total_images_generated": 96,
+        "total_audio_tracks": 24,
+        "total_animations": 96,
+        "total_video_clips": 24,
+        "estimated_duration_seconds": 480.0,
+        "average_quality_score": 8.2
+      },
+      "output": {
+        "video_path": null,
+        "video_duration_seconds": null,
+        "video_resolution": null,
+        "video_file_size_bytes": null
+      },
+      "created_at": "2026-07-26T08:00:00Z",
+      "updated_at": "2026-07-26T10:30:00Z",
+      "completed_at": null
+    }
+  ]
+}

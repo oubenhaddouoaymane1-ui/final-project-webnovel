@@ -1,0 +1,441 @@
+{
+  "name": "024 - Super Resolution",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "super-resolution",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id as project_id, p.title, p.enable_super_resolution, p.target_resolution, i.id as image_id, i.url as image_url, i.width, i.height, i.quality_score FROM projects p JOIN images i ON i.project_id = p.id WHERE p.id = $1 AND p.state = 'rendered' ORDER BY i.quality_score ASC",
+        "additionalFields": {}
+      },
+      "id": "load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-data",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-state",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\nconst enableSuperRes = rows[0].enable_super_resolution;\nconst targetResolution = rows[0].target_resolution || '3840x2160';\n\nif (!enableSuperRes) {\n  return [{ json: { project_id: projectId, skip: true, reason: 'Super resolution disabled for this project' } }];\n}\n\nconst imagesToUpscale = rows.filter(row => {\n  const needsUpscale = !row.width || row.width < parseInt(targetResolution.split('x')[0]) || !row.quality_score || row.quality_score < 0.7;\n  return needsUpscale;\n});\n\nif (imagesToUpscale.length === 0) {\n  return [{ json: { project_id: projectId, skip: true, reason: 'All images already at target resolution and quality' } }];\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    skip: false,\n    target_resolution: targetResolution,\n    images_to_upscale: imagesToUpscale.map(img => ({\n      image_id: img.image_id,\n      image_url: img.image_url,\n      current_width: img.width,\n      current_height: img.height,\n      quality_score: img.quality_score\n    })),\n    total_to_upscale: imagesToUpscale.length\n  }\n}];"
+      },
+      "id": "check-super-resolution",
+      "name": "Check if Super Resolution Needed",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "should-upscale",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "needs-upscale",
+      "name": "Needs Upscale?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst projectId = input.project_id;\nconst targetResolution = input.target_resolution;\n\nconst upscaleJobs = input.images_to_upscale.map(img => ({\n  project_id: projectId,\n  image_id: img.image_id,\n  image_url: img.image_url,\n  target_resolution: targetResolution,\n  scale_factor: Math.ceil(parseInt(targetResolution.split('x')[0]) / (img.current_width || 1920)),\n  model: 'real-esrgan',\n  denoise_strength: 0.5\n}));\n\nreturn [{ json: { project_id: projectId, upscale_jobs: upscaleJobs, total_jobs: upscaleJobs.length } }];"
+      },
+      "id": "prepare-upscale-jobs",
+      "name": "Prepare Upscale Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/super-resolution/upscale-batch",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "jobs",
+              "value": "={{ JSON.stringify($json.upscale_jobs) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 600000
+        }
+      },
+      "id": "dispatch-upscale",
+      "name": "Dispatch Upscale Jobs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 180]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE images SET upscaled = true, upscaled_url = $2, upscaled_at = NOW() WHERE id = $1 RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "update-images",
+      "name": "Update Upscaled Images",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1740, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'final_review', updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'final_review', 'at', NOW(), 'details', 'Super resolution completed') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-state",
+      "name": "Transition to Final Review",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1960, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_events (project_id, event_type, payload, created_at) VALUES ($1, 'super_resolution_completed', jsonb_build_object('images_upscaled', $2, 'target_resolution', $3), NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2180, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "🔍 Super Resolution Complete\n\nProject: {{ $json.project_id }}\nImages upscaled: {{ $json.images_upscaled }}\nTarget resolution: {{ $json.target_resolution }}\n\nState: final_review",
+        "additionalFields": {}
+      },
+      "id": "send-progress",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2400, 180],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_URL }}/trigger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "final_review"
+            },
+            {
+              "name": "triggered_by",
+              "value": "super_resolution"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 180]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"super_resolution\", \"project_id\": $json.project_id, \"state\": \"final_review\", \"skipped\": false } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2840, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{ json: { project_id: input.project_id, skip: input.skip, reason: input.reason } }];"
+      },
+      "id": "handle-skip",
+      "name": "Handle Skip",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 360]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'final_review', updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'final_review', 'at', NOW(), 'details', 'Super resolution skipped') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-skip",
+      "name": "Transition Skip",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1520, 360],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"super_resolution\", \"project_id\": $json.project_id, \"state\": \"final_review\", \"skipped\": true } }}"
+      },
+      "id": "respond-skip",
+      "name": "Respond Skip",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1740, 360]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: 'No project data found or project not in rendered state', project_id: $('Webhook Trigger').first().json.body?.project_id } }];"
+      },
+      "id": "handle-no-data",
+      "name": "Handle No Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Load Project", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          { "node": "Validate State", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          { "node": "Check if Super Resolution Needed", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle No Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check if Super Resolution Needed": {
+      "main": [
+        [
+          { "node": "Needs Upscale?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Needs Upscale?": {
+      "main": [
+        [
+          { "node": "Prepare Upscale Jobs", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle Skip", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Prepare Upscale Jobs": {
+      "main": [
+        [
+          { "node": "Dispatch Upscale Jobs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Dispatch Upscale Jobs": {
+      "main": [
+        [
+          { "node": "Update Upscaled Images", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Update Upscaled Images": {
+      "main": [
+        [
+          { "node": "Transition to Final Review", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Final Review": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          { "node": "Send Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          { "node": "Trigger Orchestrator", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle No Data": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle Skip": {
+      "main": [
+        [
+          { "node": "Transition Skip", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition Skip": {
+      "main": [
+        [
+          { "node": "Respond Skip", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "super-resolution" },
+    { "name": "production" }
+  ]
+}

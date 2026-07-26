@@ -1,0 +1,35 @@
+{
+  "image_id": "img-01H8X9A3B",
+  "scene_id": "scn-01H8X9A3B",
+  "shot_index": 0,
+  "image_path": "/generated/images/img-01H8X9A3B.png",
+  "prompt": "A medieval castle at sunset, dramatic cinematic lighting, epic wide angle shot, volumetric fog, 4K detail, masterpiece quality",
+  "negative_prompt": "blurry, low quality, watermark, text, deformed, ugly, bad anatomy",
+  "width": 1024,
+  "height": 576,
+  "seed": 42,
+  "style": "cinematic",
+  "backend_used": "pollinations",
+  "score": 8.5,
+  "is_upscaled": false,
+  "upscale_factor": null,
+  "generation_duration_seconds": 12.4,
+  "metadata": {
+    "model": "stable-diffusion-xl",
+    "guidance_scale": 7.5,
+    "num_inference_steps": 30,
+    "sampler": "euler_a"
+  },
+  "quality_review": {
+    "review_id": "rev-01H8X9A3B",
+    "overall_score": 8.5,
+    "passed": true,
+    "scores": {
+      "visual_quality": 9.0,
+      "character_consistency": 8.0,
+      "world_consistency": 8.5,
+      "scene_alignment": 8.5
+    }
+  },
+  "created_at": "2026-07-26T09:00:10Z"
+}

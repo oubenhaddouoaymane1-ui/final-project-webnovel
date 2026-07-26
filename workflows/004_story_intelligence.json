@@ -1,0 +1,461 @@
+{
+  "name": "005 - Story Intelligence",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "story/intelligence",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-005",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "story-intelligence-005"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, p.language, c.id AS chapter_id, c.chapter_number, c.title AS chapter_title, c.content, s.id AS scene_id, s.scene_number, s.title AS scene_title, s.summary, s.characters_present, s.location, s.time_period, s.emotional_tone FROM projects p JOIN chapters c ON p.id = c.project_id JOIN scenes s ON c.id = s.chapter_id WHERE p.id = $1 AND p.state = 'parsed' ORDER BY c.chapter_number, s.scene_number",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-chapters-005",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-data-005",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-005",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\n// Aggregate scene summaries for analysis\nconst sceneSummaries = rows.map(row => ({\n  chapter: row.chapter_number,\n  chapter_title: row.chapter_title,\n  scene: row.scene_number,\n  scene_title: row.scene_title,\n  summary: row.summary,\n  characters: JSON.parse(row.characters_present || '[]'),\n  location: row.location,\n  time_period: row.time_period,\n  emotional_tone: row.emotional_tone\n}));\n\n// Build analysis prompt\nconst analysisPrompt = `Analyze this novel's narrative structure. Provide analysis in JSON format with:\n1. characters: array of objects with {name, aliases, role (protagonist/antagonist/supporting/minor), description, first_appearance}\n2. locations: array of objects with {name, type, description, significance}\n3. relationships: array of objects with {character1, character2, type, description}\n4. emotional_arcs: array of objects with {character, arc_description, emotional_trajectory}\n5. inconsistencies: array of strings describing any plot holes or contradictions\n6. themes: array of main themes\n7. narrative_structure: {three_act: boolean, climax_chapter: number, resolution_type: string}\n\nScene data:\n${JSON.stringify(sceneSummaries.slice(0, 20), null, 2)}\n\nReturn ONLY valid JSON.`;\n\nreturn [{\n  json: {\n    project_id: projectId,\n    total_scenes: rows.length,\n    analysis_prompt: analysisPrompt,\n    scene_data: sceneSummaries\n  }\n}];"
+      },
+      "id": "code-prepare-005",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": {{ JSON.stringify($('Execute Logic').item.json.analysis_prompt) }},\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-analysis-005",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || $input.first().json.text || '{}';\nlet analysis = {};\n\ntry {\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    analysis = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  analysis = {\n    characters: [],\n    locations: [],\n    relationships: [],\n    emotional_arcs: [],\n    inconsistencies: [],\n    themes: [],\n    narrative_structure: {}\n  };\n}\n\nconst projectId = $('Execute Logic').item.json.project_id;\n\n// Store characters\nconst characterInserts = (analysis.characters || []).map(char => ({\n  json: {\n    project_id: projectId,\n    name: char.name,\n    aliases: JSON.stringify(char.aliases || []),\n    role: char.role || 'minor',\n    description: char.description || '',\n    first_appearance: char.first_appearance || 1,\n    created_at: new Date().toISOString()\n  }\n}));\n\nreturn [\n  {\n    json: {\n      project_id: projectId,\n      analysis: analysis,\n      characters: characterInserts,\n      locations: analysis.locations || [],\n      relationships: analysis.relationships || [],\n      emotional_arcs: analysis.emotional_arcs || [],\n      inconsistencies: analysis.inconsistencies || [],\n      themes: analysis.themes || [],\n      narrative_structure: analysis.narrative_structure || {}\n    }\n  }\n];"
+      },
+      "id": "code-process-analysis-005",
+      "name": "Execute Logic (Scenes)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO characters (project_id, name, aliases, role, description, first_appearance, created_at) VALUES ($1, $2, $3::jsonb, $4, $5, $6, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.name }}"
+              },
+              {
+                "value": "={{ $json.aliases }}"
+              },
+              {
+                "value": "={{ $json.role }}"
+              },
+              {
+                "value": "={{ $json.description }}"
+              },
+              {
+                "value": "={{ $json.first_appearance }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-chars-005",
+      "name": "Store Scenes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO locations (project_id, name, type, description, significance, created_at) VALUES ($1, $2, $3, $4, $5, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ $json.name }}"
+              },
+              {
+                "value": "={{ $json.type }}"
+              },
+              {
+                "value": "={{ $json.description }}"
+              },
+              {
+                "value": "={{ $json.significance }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-locs-005",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'understood', intelligence_data = $2::jsonb, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ themes: $('Execute Logic (Scenes)').item.json.themes, narrative_structure: $('Execute Logic (Scenes)').item.json.narrative_structure, inconsistencies: $('Execute Logic (Scenes)').item.json.inconsistencies }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-state-005",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'story_understood', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'understood', characters_count: ($('Execute Logic (Scenes)').item.json.characters || []).length, locations_count: ($('Execute Logic (Scenes)').item.json.locations || []).length, themes: $('Execute Logic (Scenes)').item.json.themes }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-005",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2200, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=🧠 Story intelligence complete!\n\n📋 Project: {{ $('Execute Logic (Scenes)').item.json.project_id }}\n👥 Characters: {{ ($('Execute Logic (Scenes)').item.json.characters || []).length }}\n📍 Locations: {{ ($('Execute Logic (Scenes)').item.json.locations || []).length }}\n🔗 Relationships: {{ ($('Execute Logic (Scenes)').item.json.relationships || []).length }}\n🎭 Themes: {{ ($('Execute Logic (Scenes)').item.json.themes || []).join(', ') }}"
+      },
+      "id": "tg-005",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2420, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "biblified"
+            },
+            {
+              "name": "current_state",
+              "value": "understood"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-005",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'understood', project_id: $('Execute Logic (Scenes)').item.json.project_id, characters: ($('Execute Logic (Scenes)').item.json.characters || []).length, themes: $('Execute Logic (Scenes)').item.json.themes }) }}"
+      },
+      "id": "respond-005",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'No parsed data found for project' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-005",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Scenes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Scenes)": {
+      "main": [
+        [
+          {
+            "node": "Store Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Scenes": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

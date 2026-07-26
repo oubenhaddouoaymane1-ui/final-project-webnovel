@@ -1,0 +1,441 @@
+{
+  "name": "018 - Quality AI",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "quality/review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-018",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "quality-ai-018"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id AS asset_id, a.shot_id, a.project_id, a.asset_type, a.image_path, a.thumbnail_path, a.status AS asset_status, a.metadata, s.shot_number, s.shot_type, s.description, pr.positive_prompt, pr.negative_prompt FROM assets a JOIN shots s ON a.shot_id = s.id LEFT JOIN prompts pr ON a.prompt_id = pr.id WHERE a.project_id = $1 AND a.status = 'processing' ORDER BY a.created_at ASC LIMIT 50",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-assets-018",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-assets-018",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-018",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\n\nconst assets = rows.map(row => ({\n  asset_id: row.asset_id,\n  shot_id: row.shot_id,\n  project_id: row.project_id,\n  asset_type: row.asset_type,\n  image_path: row.image_path,\n  shot_number: row.shot_number,\n  shot_type: row.shot_type,\n  description: row.description,\n  positive_prompt: row.positive_prompt,\n  negative_prompt: row.negative_prompt\n}));\n\nreturn [{\n  json: {\n    assets: assets,\n    total_assets: assets.length,\n    project_id: rows[0].project_id\n  }\n}];"
+      },
+      "id": "code-prepare-018",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": \"You are an AI quality reviewer for generated images. Review each asset and assign quality scores.\\n\\nAssets: {{ JSON.stringify($('Execute Logic').item.json.assets) }}\\n\\nFor each asset, generate:\\n1. overall_score: 1-10\\n2. prompt_adherence: 1-10 (how well it matches the prompt)\\n3. composition: 1-10 (rule of thirds, framing)\\n4. style_consistency: 1-10 (matches project style)\\n5. technical_quality: 1-10 (resolution, artifacts, clarity)\\n6. emotional_accuracy: 1-10 (matches intended emotion)\\n7. issues: array of strings describing any problems\\n8. recommendation: {pass, needs_repair, reject}\\n9. repair_notes: specific fix suggestions if needs_repair\\n\\nReturn as JSON array with asset_id as key.\",\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-review-018",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || '{}';\nlet reviewData = [];\n\ntry {\n  const jsonMatch = responseText.match(/\\[[\\s\\S]*\\]/);\n  if (jsonMatch) {\n    reviewData = JSON.parse(jsonMatch[0]);\n  } else {\n    const objMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      const parsed = JSON.parse(objMatch[0]);\n      reviewData = Object.entries(parsed).map(([key, val]) => ({ asset_id: key, ...val }));\n    }\n  }\n} catch (e) {\n  reviewData = [];\n}\n\nconst assets = $('Execute Logic').item.json.assets;\nconst projectId = $('Execute Logic').item.json.project_id;\n\nconst reviewInserts = [];\nlet passed = 0, needsRepair = 0, rejected = 0;\n\nfor (const rd of reviewData) {\n  const asset = assets.find(a => a.asset_id === rd.asset_id);\n  const overall = rd.overall_score || 0;\n  const recommendation = rd.recommendation || 'reject';\n\n  if (recommendation === 'pass') passed++;\n  else if (recommendation === 'needs_repair') needsRepair++;\n  else rejected++;\n\n  reviewInserts.push({\n    json: {\n      asset_id: rd.asset_id,\n      project_id: projectId,\n      overall_score: overall,\n      prompt_adherence: rd.prompt_adherence || 0,\n      composition: rd.composition || 0,\n      style_consistency: rd.style_consistency || 0,\n      technical_quality: rd.technical_quality || 0,\n      emotional_accuracy: rd.emotional_accuracy || 0,\n      issues: JSON.stringify(rd.issues || []),\n      recommendation: recommendation,\n      repair_notes: rd.repair_notes || null\n    }\n  });\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    reviews: reviewInserts,\n    total_reviewed: reviewInserts.length,\n    passed: passed,\n    needs_repair: needsRepair,\n    rejected: rejected\n  }\n}];"
+      },
+      "id": "code-process-review-018",
+      "name": "Execute Logic (Review)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO reviews (asset_id, project_id, overall_score, prompt_adherence, composition, style_consistency, technical_quality, emotional_accuracy, issues, recommendation, repair_notes, reviewed_at, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11, NOW(), NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.asset_id }}"
+              },
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.overall_score }}"
+              },
+              {
+                "value": "={{ $json.prompt_adherence }}"
+              },
+              {
+                "value": "={{ $json.composition }}"
+              },
+              {
+                "value": "={{ $json.style_consistency }}"
+              },
+              {
+                "value": "={{ $json.technical_quality }}"
+              },
+              {
+                "value": "={{ $json.emotional_accuracy }}"
+              },
+              {
+                "value": "={{ $json.issues }}"
+              },
+              {
+                "value": "={{ $json.recommendation }}"
+              },
+              {
+                "value": "={{ $json.repair_notes }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-reviews-018",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE assets SET status = CASE WHEN $2 = 'pass' THEN 'passed' WHEN $2 = 'needs_repair' THEN 'needs_repair' ELSE 'rejected' END, quality_score = $3, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.asset_id }}"
+              },
+              {
+                "value": "={{ $json.recommendation }}"
+              },
+              {
+                "value": "={{ $json.overall_score }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-assets-018",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'quality_review_complete', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Review)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ total_reviewed: $('Execute Logic (Review)').item.json.total_reviewed, passed: $('Execute Logic (Review)').item.json.passed, needs_repair: $('Execute Logic (Review)').item.json.needs_repair, rejected: $('Execute Logic (Review)').item.json.rejected }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-018",
+      "name": "Store Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=🔍 Quality review complete!\n\n📋 Project: {{ $('Execute Logic (Review)').item.json.project_id }}\n✅ Passed: {{ $('Execute Logic (Review)').item.json.passed }}\n🔧 Needs repair: {{ $('Execute Logic (Review)').item.json.needs_repair }}\n❌ Rejected: {{ $('Execute Logic (Review)').item.json.rejected }}"
+      },
+      "id": "tg-018",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2200, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Review)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "reviewed"
+            },
+            {
+              "name": "current_state",
+              "value": "generating"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-018",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2420, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'reviewed', total_reviewed: $('Execute Logic (Review)').item.json.total_reviewed, passed: $('Execute Logic (Review)').item.json.passed, needs_repair: $('Execute Logic (Review)').item.json.needs_repair, rejected: $('Execute Logic (Review)').item.json.rejected }) }}"
+      },
+      "id": "respond-018",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'No assets found for review' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-018",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Review)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Review)": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Store Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Events": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

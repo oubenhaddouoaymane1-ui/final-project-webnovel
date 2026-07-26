@@ -1,0 +1,7 @@
+edge-tts
+fastapi
+uvicorn[standard]
+pydantic
+redis
+httpx
+aiofiles

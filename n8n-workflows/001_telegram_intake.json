@@ -1,0 +1,732 @@
+{
+  "name": "001_telegram_intake",
+  "nodes": [
+    {
+      "parameters": {
+        "updateType": "message",
+        "additionalFields": {
+          "filters": {}
+        }
+      },
+      "id": "node-01-telegram-trigger",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1,
+      "position": [250, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.message.text }}",
+                    "operation": "startsWith",
+                    "value2": "/start"
+                  }
+                ]
+              },
+              "output": 0,
+              "renameOutput": "START"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.message.text }}",
+                    "operation": "startsWith",
+                    "value2": "/help"
+                  }
+                ]
+              },
+              "output": 1,
+              "renameOutput": "HELP"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.message.text }}",
+                    "operation": "startsWith",
+                    "value2": "/status"
+                  }
+                ]
+              },
+              "output": 2,
+              "renameOutput": "STATUS"
+            },
+            {
+              "conditions": {
+                "string": [
+                  {
+                    "value1": "={{ $json.message.text }}",
+                    "operation": "startsWith",
+                    "value2": "/cancel"
+                  }
+                ]
+              },
+              "output": 3,
+              "renameOutput": "CANCEL"
+            },
+            {
+              "conditions": {
+                "boolean": [
+                  {
+                    "value1": "={{ $json.message.document }}",
+                    "operation": "exists"
+                  }
+                ]
+              },
+              "output": 4,
+              "renameOutput": "FILE_INTAKE"
+            },
+            {
+              "conditions": {
+                "boolean": [
+                  {
+                    "value1": "={{ $json.message.text }}",
+                    "operation": "exists"
+                  }
+                ]
+              },
+              "output": 5,
+              "renameOutput": "TEXT_INTAKE"
+            }
+          ]
+        },
+        "fallbackOutput": 6
+      },
+      "id": "node-02-command-router",
+      "name": "Command Router",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 2,
+      "position": [450, 300]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "🎬 Welcome to CineOS!\n\nSend me a novel (.txt file) and I'll create a cinematic video.\n\nCommands:\n/status - Check project status\n/cancel - Cancel current project\n/help - Show this help",
+        "additionalFields": {
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "node-10-welcome",
+      "name": "Welcome Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [650, 100],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.message.chat.id }}",
+        "text": "📖 How to use:\n\n1. Send me a .txt file with your novel\n2. Wait for processing\n3. Receive your cinematic video\n\nLimits: 50-500,000 words, UTF-8 text\n\nCommands:\n/status - Check project status\n/cancel - Cancel current project"
+      },
+      "id": "node-11-help",
+      "name": "Help Message",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [650, 200],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_id, title, current_state, progress, created_at FROM cineos_core.projects WHERE user_id = $1 AND current_state NOT IN ('completed', 'cancelled', 'failed') ORDER BY created_at DESC LIMIT 1",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.message.from.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-12-status-query",
+      "name": "Status Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.length > 0 ? '📊 Active Project: ' + $json[0].title + '\\nState: ' + $json[0].current_state + '\\nProgress: ' + ($json[0].progress * 100).toFixed(1) + '%' : '✅ No active projects. Send me a novel to get started!' }}"
+      },
+      "id": "node-12-status-reply",
+      "name": "Status Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [850, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE cineos_core.projects SET current_state = 'cancelled', updated_at = NOW(), last_state_change_at = NOW() WHERE user_id = $1 AND current_state NOT IN ('completed', 'cancelled', 'failed') RETURNING project_id, title",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.message.from.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-13-cancel-query",
+      "name": "Cancel Query",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 400],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "={{ $json.length > 0 ? '❌ Project cancelled: ' + $json[0].title : '❌ No active project to cancel.' }}"
+      },
+      "id": "node-13-cancel-reply",
+      "name": "Cancel Reply",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [850, 400],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT project_id FROM cineos_core.projects WHERE user_id = $1 AND current_state NOT IN ('completed', 'cancelled', 'failed')",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.message.from.id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-40-check-duplicate",
+      "name": "Check Duplicate",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [650, 500],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "boolean": [
+            {
+              "value1": "={{ $json.length > 0 }}",
+              "value2": true
+            }
+          ]
+        }
+      },
+      "id": "node-40-if-duplicate",
+      "name": "Is Duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [850, 500]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "⚠️ You already have an active project. Use /cancel to stop it first."
+      },
+      "id": "node-41-duplicate-error",
+      "name": "Duplicate Error",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1050, 450],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fileName": "={{ $json.message.document.file_name }}",
+        "dataPropertyName": "data",
+        "bucketName": "cineos-intake",
+        "additionalFields": {}
+      },
+      "id": "node-20-download-file",
+      "name": "Download File",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [1050, 550],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\nconst path = require('path');\n\nconst fileData = $input.first().json.data;\nconst fileName = $input.first().json.message.document.file_name;\nconst fileSize = $input.first().json.message.document.file_size;\n\n// Validate file\nif (!fileName.endsWith('.txt')) {\n  throw new Error('Only .txt files are supported');\n}\n\nif (fileSize > 10 * 1024 * 1024) {\n  throw new Error('File too large (max 10MB)');\n}\n\n// Save to temp\nconst tempDir = '/tmp/cineos_intake';\nif (!fs.existsSync(tempDir)) {\n  fs.mkdirSync(tempDir, { recursive: true });\n}\n\nconst filePath = path.join(tempDir, fileName);\nfs.writeFileSync(filePath, fileData);\n\nreturn [{ json: { file_path: filePath, file_size: fileSize, file_name: fileName } }];"
+      },
+      "id": "node-50-validate-file",
+      "name": "Validate File",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1250, 550]
+    },
+    {
+      "parameters": {
+        "jsCode": "const fs = require('fs');\n\nconst filePath = $input.first().json.file_path;\nconst raw = fs.readFileSync(filePath);\n\n// Detect encoding\nlet text = null;\nlet encoding = null;\nconst encodings = ['utf-8', 'utf-8-sig', 'latin-1', 'cp1252', 'iso-8859-1'];\n\nfor (const enc of encodings) {\n  try {\n    text = raw.toString(enc);\n    encoding = enc;\n    break;\n  } catch (e) {\n    continue;\n  }\n}\n\nif (!text) {\n  throw new Error('Cannot detect encoding');\n}\n\n// Detect language\nconst arabicChars = (text.match(/[\\u0600-\\u06FF]/g) || []).length;\nconst totalChars = text.length;\nconst ratio = arabicChars / totalChars;\nlet language = 'en';\nif (ratio > 0.5) language = 'ar';\nelse if (ratio > 0.1) language = 'mixed';\n\n// Normalize text\nconst unicodedata = require('unicodedata');\ntext = text.replace(/\\r\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').replace(/[ \\t]+/g, ' ').trim();\n\nconst title = text.split('\\n')[0].substring(0, 200);\nconst wordCount = text.split(/\\s+/).length;\nconst charCount = text.length;\n\nif (wordCount < 50) throw new Error('Too few words (minimum 50)');\nif (wordCount > 500000) throw new Error('Too many words (maximum 500,000)');\n\nreturn [{\n  json: {\n    raw_text: raw.toString('binary'),\n    cleaned_text: text,\n    title: title,\n    word_count: wordCount,\n    char_count: charCount,\n    encoding: encoding,\n    language: language,\n    file_path: $input.first().json.file_path\n  }\n}];"
+      },
+      "id": "node-50-detect-encoding",
+      "name": "Detect Encoding & Language",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 1,
+      "position": [1450, 550]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cineos_core.projects (user_id, chat_id, title, current_state, language, progress, created_at, last_state_change_at) VALUES ($1, $2, $3, 'received', $4, 0.0, NOW(), NOW()) RETURNING project_id",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $('Telegram Trigger').item.json.message.from.id }}"
+              },
+              {
+                "value": "={{ $('Telegram Trigger').item.json.message.chat.id }}"
+              },
+              {
+                "value": "={{ $json.title }}"
+              },
+              {
+                "value": "={{ $json.language }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-60-create-project",
+      "name": "Create Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1650, 550],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cineos_core.novels (project_id, title, raw_text, cleaned_text, word_count, char_count, encoding, language, source_type) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'telegram') RETURNING novel_id",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $('Detect Encoding & Language').item.json.title }}"
+              },
+              {
+                "value": "={{ $('Detect Encoding & Language').item.json.raw_text }}"
+              },
+              {
+                "value": "={{ $('Detect Encoding & Language').item.json.cleaned_text }}"
+              },
+              {
+                "value": "={{ $('Detect Encoding & Language').item.json.word_count }}"
+              },
+              {
+                "value": "={{ $('Detect Encoding & Language').item.json.char_count }}"
+              },
+              {
+                "value": "={{ $('Detect Encoding & Language').item.json.encoding }}"
+              },
+              {
+                "value": "={{ $('Detect Encoding & Language').item.json.language }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-61-create-novel",
+      "name": "Create Novel",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [1850, 550],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO cineos_core.state_log (project_id, entity_type, entity_id, old_state, new_state, workflow, operator, created_at) VALUES ($1, 'project', $1, NULL, 'received', 'telegram_intake', 'system', NOW()); INSERT INTO cineos_core.events (project_id, event_type, workflow, state_before, state_after, severity, message, payload, created_at) VALUES ($1, 'PROJECT_CREATED', 'telegram_intake', NULL, 'received', 'info', 'Project created from Telegram intake', $2, NOW())",
+        "additionalFields": {
+          "queryParameters": {
+            "parameters": [
+              {
+                "value": "={{ $('Create Project').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ title: $('Detect Encoding & Language').item.json.title, word_count: $('Detect Encoding & Language').item.json.word_count, language: $('Detect Encoding & Language').item.json.language }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "node-62-emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 1,
+      "position": [2050, 550],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "✅ Novel received!\n\n📖 Title: {{ $('Detect Encoding & Language').item.json.title }}\n📝 Words: {{ $('Detect Encoding & Language').item.json.word_count.toLocaleString() }}\n🌐 Language: {{ $('Detect Encoding & Language').item.json.language }}\n\nStarting production pipeline..."
+      },
+      "id": "node-70-send-ack",
+      "name": "Send Acknowledgment",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2250, 550],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://localhost:5678/webhook/orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Create Project').item.json.project_id }}"
+            },
+            {
+              "name": "trigger_event",
+              "value": "new_project"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "node-80-trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 1,
+      "position": [2450, 550]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "📝 Please send me a novel as a .txt file to get started."
+      },
+      "id": "node-99-text-response",
+      "name": "Text Response",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [650, 650],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Telegram Trigger').item.json.message.chat.id }}",
+        "text": "❌ Error: {{ $json.error.message }}\nPlease try again or contact admin."
+      },
+      "id": "node-error-handler",
+      "name": "Error Handler",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1,
+      "position": [2650, 750],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Command Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Command Router": {
+      "main": [
+        [
+          {
+            "node": "Welcome Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Help Message",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Status Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Cancel Query",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Check Duplicate",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Text Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Text Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status Query": {
+      "main": [
+        [
+          {
+            "node": "Status Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cancel Query": {
+      "main": [
+        [
+          {
+            "node": "Cancel Reply",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Duplicate": {
+      "main": [
+        [
+          {
+            "node": "Is Duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Duplicate Error",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Download File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Download File": {
+      "main": [
+        [
+          {
+            "node": "Validate File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate File": {
+      "main": [
+        [
+          {
+            "node": "Detect Encoding & Language",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect Encoding & Language": {
+      "main": [
+        [
+          {
+            "node": "Create Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Project": {
+      "main": [
+        [
+          {
+            "node": "Create Novel",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create Novel": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Send Acknowledgment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Acknowledgment": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "errorWorkflow": "error-handler"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos"
+    },
+    {
+      "name": "intake"
+    }
+  ]
+}

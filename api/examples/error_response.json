@@ -1,0 +1,46 @@
+{
+  "error": {
+    "code": "BACKEND_UNAVAILABLE",
+    "message": "All image generation backends failed after retries",
+    "details": [
+      {
+        "field": "backend",
+        "message": "pollinations returned HTTP 503: Service temporarily unavailable",
+        "code": "HTTP_ERROR"
+      },
+      {
+        "field": "backend",
+        "message": "huggingface_inference returned HTTP 429: Rate limit exceeded",
+        "code": "RATE_LIMITED"
+      }
+    ],
+    "request_id": "req-01H8X9A3B-xK9m2p",
+    "documentation_url": "https://docs.cineos.dev/errors#BACKEND_UNAVAILABLE",
+    "retry_after_seconds": 30
+  },
+  "context": {
+    "job_id": "job-01H8X9A3B",
+    "project_id": "proj-01H8X9A3B",
+    "worker_id": "wk-01H8X9A3B",
+    "attempt": 3,
+    "max_attempts": 3,
+    "backends_tried": [
+      {
+        "name": "colab_comfyui",
+        "error": "Colab endpoint not active",
+        "duration_ms": 50
+      },
+      {
+        "name": "huggingface_inference",
+        "error": "HTTP 429: Rate limit exceeded",
+        "duration_ms": 1200
+      },
+      {
+        "name": "pollinations",
+        "error": "HTTP 503: Service temporarily unavailable",
+        "duration_ms": 5020
+      }
+    ],
+    "total_duration_seconds": 6.27
+  }
+}

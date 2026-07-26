@@ -1,0 +1,407 @@
+{
+  "name": "013 - Emotion Director",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "emotion/direct",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-013",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "emotion-director-013"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, p.language, s.id AS scene_id, s.scene_number, s.title AS scene_title, s.summary, s.emotional_tone, s.production_metadata, s.characters_present FROM projects p JOIN scenes s ON p.id = s.project_id WHERE p.id = $1 AND p.state IN ('planned', 'shot_planned', 'fight_choreographed') ORDER BY s.scene_number",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-scenes-013",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-scenes-013",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-013",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\nconst scenes = rows.map(row => ({\n  scene_id: row.scene_id,\n  scene_number: row.scene_number,\n  title: row.scene_title,\n  summary: row.summary,\n  emotional_tone: row.emotional_tone,\n  production_metadata: row.production_metadata || {},\n  characters_present: JSON.parse(row.characters_present || '[]')\n}));\n\nreturn [{\n  json: {\n    project_id: projectId,\n    title: rows[0].title,\n    scenes: scenes,\n    total_scenes: scenes.length\n  }\n}];"
+      },
+      "id": "code-prepare-013",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": \"You are an emotional cinematography director. Generate cinematography adjustments based on emotional data for each scene.\\n\\nProject: '{{ $('Execute Logic').item.json.title }}'\\n\\nScenes: {{ JSON.stringify($('Execute Logic').item.json.scenes) }}\\n\\nFor each scene, generate:\\n1. lighting: {\\n     color_temperature: warm/cool/neutral,\\n     intensity: 1-10,\\n     direction: {front, side, back, overhead, under},\\n     shadows: soft/hard/dramatic/none,\\n     color_palette: array of hex colors\\n   }\\n2. camera: {\\n     lens_choice: {wide, normal, telephoto, macro},\\n     depth_of_field: shallow/medium/deep,\\n     angle_modifier: {level, slight-low, dramatic-low, slight-high, overhead},\\n     movement_energy: calm/moderate/intense\\n   }\\n3. transitions: {\\n     preferred_type: {cut, dissolve, fade, wipe},\\n     pacing: slow/moderate/fast,\\n     rhythm: steady/accelerating/decelerating\\n   }\\n4. color_grading: {\\n     mood: description,\\n     saturation: desaturated/normal/vibrant,\\n     contrast: low/medium/high\\n   }\\n5. emotional_arc_beats: array of {moment, intensity, visual_cue}\\n\\nReturn as JSON array with scene_id as key.\",\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-emotion-013",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || '{}';\nlet emotionData = [];\n\ntry {\n  const jsonMatch = responseText.match(/\\[[\\s\\S]*\\]/);\n  if (jsonMatch) {\n    emotionData = JSON.parse(jsonMatch[0]);\n  } else {\n    const objMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      const parsed = JSON.parse(objMatch[0]);\n      emotionData = Object.entries(parsed).map(([key, val]) => ({ scene_id: key, ...val }));\n    }\n  }\n} catch (e) {\n  emotionData = [];\n}\n\nconst projectId = $('Execute Logic').item.json.project_id;\nconst scenes = $('Execute Logic').item.json.scenes;\n\nconst sceneUpdates = emotionData.map(ed => {\n  const scene = scenes.find(s => s.scene_id === ed.scene_id);\n  return {\n    json: {\n      scene_id: ed.scene_id,\n      project_id: projectId,\n      emotion_cinematography: JSON.stringify({\n        lighting: ed.lighting || {},\n        camera: ed.camera || {},\n        transitions: ed.transitions || {},\n        color_grading: ed.color_grading || {},\n        emotional_arc_beats: ed.emotional_arc_beats || []\n      })\n    }\n  };\n}).filter(s => s.json.scene_id);\n\nreturn [{\n  json: {\n    project_id: projectId,\n    scene_updates: sceneUpdates,\n    total_adjusted: sceneUpdates.length\n  }\n}];"
+      },
+      "id": "code-process-emotion-013",
+      "name": "Execute Logic (Emotion)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE scenes SET emotion_cinematography = $2::jsonb, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.scene_id }}"
+              },
+              {
+                "value": "={{ $json.emotion_cinematography }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-scenes-013",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET emotion_directed = true, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Emotion)').item.json.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-project-013",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'emotion_direction_complete', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Emotion)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'emotion_directed', total_adjusted: $('Execute Logic (Emotion)').item.json.total_adjusted }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-013",
+      "name": "Store Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=🎭 Emotion direction complete!\n\n📋 Project: {{ $('Execute Logic (Emotion)').item.json.project_id }}\n🎬 Scenes adjusted: {{ $('Execute Logic (Emotion)').item.json.total_adjusted }}\n🎨 Lighting, camera & transitions tuned"
+      },
+      "id": "tg-013",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2200, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Emotion)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "emotion_directed"
+            },
+            {
+              "name": "current_state",
+              "value": "shot_planned"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-013",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2420, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'emotion_directed', project_id: $('Execute Logic (Emotion)').item.json.project_id, total_adjusted: $('Execute Logic (Emotion)').item.json.total_adjusted }) }}"
+      },
+      "id": "respond-013",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'No scenes found for emotion direction' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-013",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Emotion)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Emotion)": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Store Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Events": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

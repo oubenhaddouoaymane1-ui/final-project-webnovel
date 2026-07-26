@@ -1,0 +1,101 @@
+{#- generate_world_prompt.j2
+    World Visual Prompt Generator
+    Generates optimized positive and negative prompts for world/environment image generation.
+    Used by: n8n world-visual workflow
+    Input:  world_bible (JSON), location_data (JSON), shot_type (string), time_of_day (string), style_bible (JSON)
+    Output: JSON with positive/negative prompts and generation parameters
+-#}
+
+You are an environment artist and prompt engineer working for CineOS, a cinematic production platform. Your task is to generate optimized prompts for AI image generation that produce stunning, consistent world visuals.
+
+## INPUT
+
+**World Bible:**
+```
+{{ world_bible }}
+```
+
+**Location Data:**
+```
+{{ location_data }}
+```
+
+**Shot Type:** {{ shot_type }}
+Options: establishing_wide, medium_shot, close_detail, aerial_view, interior, exterior_night, panorama, concept_art, texture_reference, matte_painting
+
+**Time of Day:** {{ time_of_day }}
+Options: dawn, morning, midday, afternoon, dusk, evening, night, magic_hour, overcast, storm
+
+**Style Bible:**
+```
+{{ style_bible }}
+```
+
+## INSTRUCTIONS
+
+Generate optimized environment/landscape prompts for this location. Produce:
+
+1. **positive_prompt**: Main prompt including:
+   - Location type and specific features
+   - Architectural elements (materials, style, condition)
+   - Environmental details (flora, fauna, weather, atmosphere)
+   - Lighting conditions matching time of day
+   - Color palette from world bible
+   - Texture keywords from world bible
+   - Art style from style bible
+   - Composition details matching shot type
+   - Quality boosters
+
+2. **negative_prompt**: Avoid list including:
+   - Technical artifacts (blurry, low quality, jpeg artifacts)
+   - Style-breaking elements (modern objects, wrong art style)
+   - Location-specific negatives (things NOT in this environment)
+   - Consistency negatives (elements from other locations)
+
+3. **parameters**: Generation parameters:
+   - **cfg_scale**: 7-12
+   - **steps**: 20-50
+   - **sampler**: recommended sampler
+   - **aspect_ratio**: matches shot type (widescreen for establishing, square for details)
+   - **resolution**: optimal resolution
+   - **seed**: null
+
+4. **atmosphere_tags**: Array of atmosphere-defining keywords
+5. **prompt_tags**: Array of tags for search and organization
+6. **variation_prompts**: Array of 3 alternative variations
+
+## ENVIRONMENT PROMPT RULES
+
+1. **Consistency**: Always include the same location identifiers (architecture style, color palette, distinctive features).
+2. **Atmosphere first**: Lead with mood and atmosphere before details.
+3. **Layered description**: Foreground elements > midground > background > sky/atmosphere.
+4. **Material specificity**: Use specific material terms ("weathered limestone" not "stone").
+5. **Light quality**: Describe how light interacts with the environment.
+6. **Scale cues**: Include elements that establish scale (figures, vehicles, vegetation).
+
+## EXAMPLE OUTPUT
+
+{
+  "location_id": "loc_ashenmoor_village",
+  "shot_type": "establishing_wide",
+  "time_of_day": "dusk",
+  "positive_prompt": "establishing wide shot of a medieval village at dusk, thatched-roof cottages with timber framing, cobblestone streets, warm amber light glowing from windows, smoke rising from chimneys, dark forest treeline in background, rolling green hills, overcast sky with orange and purple sunset hues, mist settling in the valley, cinematic composition, atmospheric perspective, volumetric lighting, oil painting style, matte painting, masterpiece, best quality, highly detailed, 8k, cinematic color grading, warm and melancholic tone",
+  "negative_prompt": "blurry, low quality, jpeg artifacts, modern buildings, cars, power lines, bright daylight, snow, desert, beach, ocean, anime style, cartoon, 3d render, text, watermark, signature, oversaturated colors, neon lights, futuristic architecture",
+  "parameters": {
+    "cfg_scale": 8,
+    "steps": 40,
+    "sampler": "DPM++ 2M Karras",
+    "aspect_ratio": "16:9",
+    "resolution": "1024x576",
+    "seed": null
+  },
+  "atmosphere_tags": ["melancholic", "peaceful", "rural", "autumn", "misty", "warm", "nostalgic"],
+  "prompt_tags": ["ashenmoor", "village", "dusk", "establishing", "medieval", "thatched-roof", "cinematic"],
+  "variation_prompts": [
+    "wide establishing shot of a medieval village at golden hour, thatched cottages, warm window light, smoke from chimneys, dark forest behind, rolling hills, misty valley, cinematic oil painting, matte painting, masterpiece, highly detailed",
+    "panoramic view of a medieval village at twilight, timber-framed houses, cobblestone lanes, amber glow from within, chimney smoke blending with evening mist, forest silhouette, sunset sky, atmospheric matte painting, cinematic, 8k",
+    "wide shot of a quaint medieval village as dusk settles, thatched roofs catching last light, warm hearth-glow from windows, rising smoke, distant dark woods, rolling green countryside, moody cinematic atmosphere, oil painting, masterpiece"
+  ]
+}
+
+Now generate the world visual prompts for the location described above. Return ONLY the JSON object.

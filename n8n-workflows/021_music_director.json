@@ -1,0 +1,313 @@
+{
+  "name": "021 - Music Director",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "music-director",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id as project_id, p.title, p.genre, p.mood, s.id as scene_id, s.scene_number, s.description, s.dialogue, s.emotion, s.importance, s.duration_seconds, e.name as emotion_name, e.intensity, e.color_palette FROM projects p JOIN scenes s ON s.project_id = p.id JOIN emotions e ON e.scene_id = s.id WHERE p.id = $1 AND p.state = 'scored' ORDER BY s.scene_number",
+        "additionalFields": {}
+      },
+      "id": "load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-rows",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-state",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\nconst sceneProfiles = rows.map(row => {\n  const emotionIntensity = row.importance * (row.intensity || 0.5);\n  \n  let musicStyle, tempo, instrumentation;\n  \n  if (emotionIntensity > 0.8) {\n    musicStyle = 'orchestral_dramatic';\n    tempo = 'adagio';\n    instrumentation = ['strings', 'brass', 'timpani'];\n  } else if (emotionIntensity > 0.5) {\n    musicStyle = 'ambient_cinematic';\n    tempo = 'andante';\n    instrumentation = ['piano', 'strings', 'woodwinds'];\n  } else if (emotionIntensity > 0.3) {\n    musicStyle = 'light_acoustic';\n    tempo = 'moderato';\n    instrumentation = ['acoustic_guitar', 'piano', 'cello'];\n  } else {\n    musicStyle = 'minimal_electronic';\n    tempo = 'allegretto';\n    instrumentation = ['synth_pad', 'soft_percussion'];\n  }\n  \n  return {\n    scene_id: row.scene_id,\n    scene_number: row.scene_number,\n    duration: row.duration_seconds,\n    emotion: row.emotion_name,\n    emotion_intensity: emotionIntensity,\n    music_style: musicStyle,\n    tempo: tempo,\n    instrumentation: instrumentation,\n    volume_start: Math.min(0.3 + emotionIntensity * 0.7, 1.0),\n    volume_peak: Math.min(0.5 + emotionIntensity * 0.5, 1.0),\n    crossfade_duration: 2.0\n  };\n});\n\nreturn [{ json: { project_id: projectId, scene_profiles: sceneProfiles } }];"
+      },
+      "id": "generate-music-profiles",
+      "name": "Generate Music Profiles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst projectId = input.project_id;\nconst profiles = input.scene_profiles;\n\nconst musicPlans = profiles.map(profile => ({\n  project_id: projectId,\n  scene_id: profile.scene_id,\n  scene_number: profile.scene_number,\n  music_style: profile.music_style,\n  tempo: profile.tempo,\n  instrumentation: JSON.stringify(profile.instrumentation),\n  volume_start: profile.volume_start,\n  volume_peak: profile.volume_peak,\n  crossfade_in: profile.crossfade_duration,\n  crossfade_out: profile.crossfade_duration,\n  duration: profile.duration,\n  prompt: `Generate ${profile.music_style} music, ${profile.tempo} tempo, featuring ${profile.instrumentation.join(', ')}. Emotion: ${profile.emotion} (intensity: ${profile.emotion_intensity}). Duration: ${profile.duration}s.`\n}));\n\nreturn [{ json: { project_id: projectId, music_plans: musicPlans } }];"
+      },
+      "id": "create-music-plans",
+      "name": "Create Music Plans",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO music_cues (project_id, scene_id, scene_number, music_style, tempo, instrumentation, volume_start, volume_peak, crossfade_in, crossfade_out, duration_seconds, generation_prompt, status) SELECT ($1)::uuid, (value->>'scene_id')::uuid, (value->>'scene_number')::int, value->>'music_style', value->>'tempo', (value->>'instrumentation')::jsonb, (value->>'volume_start')::float, (value->>'volume_peak')::float, (value->>'crossfade_in')::float, (value->>'crossfade_out')::float, (value->>'duration')::int, value->>'prompt', 'pending' FROM jsonb_array_elements($2::jsonb) RETURNING id, scene_id",
+        "additionalFields": {}
+      },
+      "id": "store-music-cues",
+      "name": "Store Music Cues",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'musicked', updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'musicked', 'at', NOW(), 'details', 'Music cues generated and stored') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-state",
+      "name": "Transition to Musicked",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1520, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_events (project_id, event_type, payload, created_at) VALUES ($1, 'music_completed', jsonb_build_object('scenes_processed', $2, 'cues_created', $3), NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1740, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "🎵 Music Director Complete\n\nProject: {{ $json.project_id }}\nScenes scored: {{ $json.scenes_processed }}\nMusic cues created: {{ $json.cues_created }}\n\nState: musicked",
+        "additionalFields": {}
+      },
+      "id": "send-progress",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1960, 240],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_URL }}/trigger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "musicked"
+            },
+            {
+              "name": "triggered_by",
+              "value": "music_director"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2180, 240]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"music_director\", \"project_id\": $json.project_id, \"state\": \"musicked\" } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2400, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: 'No project data found or project not in scored state', project_id: $('Webhook Trigger').first().json.body?.project_id } }];"
+      },
+      "id": "handle-no-data",
+      "name": "Handle No Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Load Project", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          { "node": "Validate State", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          { "node": "Generate Music Profiles", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle No Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Generate Music Profiles": {
+      "main": [
+        [
+          { "node": "Create Music Plans", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Create Music Plans": {
+      "main": [
+        [
+          { "node": "Store Music Cues", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Store Music Cues": {
+      "main": [
+        [
+          { "node": "Transition to Musicked", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Musicked": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          { "node": "Send Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          { "node": "Trigger Orchestrator", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle No Data": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "music" },
+    { "name": "production" }
+  ]
+}

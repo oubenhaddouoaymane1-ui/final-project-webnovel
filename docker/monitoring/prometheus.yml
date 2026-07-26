@@ -1,0 +1,31 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  scrape_timeout: 10s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "node-exporter"
+    static_configs:
+      - targets: ["node-exporter:9100"]
+
+  - job_name: "cineos-services"
+    static_configs:
+      - targets:
+          - "postgres:5432"
+          - "n8n:5678"
+          - "redis:6379"
+    metrics_path: /metrics
+    scrape_interval: 30s
+
+  - job_name: "cineos-workers"
+    static_configs:
+      - targets:
+          - "workers:8000"
+          - "ffmpeg-renderer:8001"
+          - "voice-tts:8002"
+    metrics_path: /metrics
+    scrape_interval: 30s

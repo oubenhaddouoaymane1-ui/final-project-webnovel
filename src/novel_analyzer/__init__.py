@@ -1,0 +1,1 @@
+"""Novel analyzer module"""

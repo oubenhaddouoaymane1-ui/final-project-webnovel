@@ -1,0 +1,179 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/scene.json",
+  "title": "Scene",
+  "description": "A scene within a novel — the fundamental narrative unit for the CineOS pipeline.",
+  "type": "object",
+  "required": ["id", "novel_id", "chapter_number", "scene_number"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique scene identifier",
+      "examples": ["scn-01H8X9A3B"]
+    },
+    "novel_id": {
+      "type": "string",
+      "description": "Reference to the parent novel",
+      "examples": ["nvl-01H8X9A3B"]
+    },
+    "chapter_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Chapter number within the novel",
+      "examples": [3]
+    },
+    "scene_number": {
+      "type": "integer",
+      "minimum": 1,
+      "description": "Scene number within the chapter",
+      "examples": [2]
+    },
+    "purpose": {
+      "type": "string",
+      "nullable": true,
+      "description": "Narrative purpose of the scene (e.g., 'introduce antagonist', 'build tension')",
+      "examples": ["Reveal the castle's hidden passage"]
+    },
+    "location_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Reference to world bible location",
+      "examples": ["loc-castle-north-tower"]
+    },
+    "time_of_day": {
+      "type": "string",
+      "enum": ["dawn", "morning", "midday", "afternoon", "dusk", "night", "unknown"],
+      "default": "unknown",
+      "description": "Time of day for lighting consistency",
+      "examples": ["dusk"]
+    },
+    "emotion": {
+      "type": "string",
+      "description": "Dominant emotional tone",
+      "examples": ["tension"]
+    },
+    "conflict": {
+      "type": "string",
+      "nullable": true,
+      "description": "Central conflict of the scene",
+      "examples": ["protagonist discovers the betrayal"]
+    },
+    "importance": {
+      "type": "string",
+      "enum": ["critical", "high", "normal", "low", "filler"],
+      "default": "normal",
+      "description": "Narrative importance — affects shot count and quality investment",
+      "examples": ["high"]
+    },
+    "beginning_text": {
+      "type": "string",
+      "nullable": true,
+      "description": "Opening text of the scene from the novel"
+    },
+    "ending_text": {
+      "type": "string",
+      "nullable": true,
+      "description": "Closing text of the scene from the novel"
+    },
+    "transition_in": {
+      "type": "string",
+      "enum": ["cut", "fade", "dissolve", "wipe", "none"],
+      "default": "cut",
+      "description": "Transition from the previous scene"
+    },
+    "transition_out": {
+      "type": "string",
+      "enum": ["cut", "fade", "dissolve", "wipe", "none"],
+      "default": "cut",
+      "description": "Transition to the next scene"
+    },
+    "characters_present": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "role": {
+            "type": "string",
+            "enum": ["protagonist", "antagonist", "supporting", "background", "mentioned"],
+            "description": "Character's role in this scene"
+          }
+        },
+        "required": ["character_id", "role"]
+      },
+      "default": [],
+      "description": "Characters present in the scene"
+    },
+    "image_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of generated images for this scene",
+      "examples": [4]
+    },
+    "audio_duration": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total narration duration in seconds",
+      "examples": [12.5]
+    },
+    "video_duration": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total rendered video duration in seconds",
+      "examples": [15.0]
+    },
+    "quality_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "nullable": true,
+      "description": "Overall quality score for this scene"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "planned", "generating", "reviewing", "completed", "failed"],
+      "default": "pending",
+      "description": "Scene production status"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "id": "scn-01H8X9A3B",
+      "novel_id": "nvl-01H8X9A3B",
+      "chapter_number": 3,
+      "scene_number": 2,
+      "purpose": "Reveal the castle's hidden passage",
+      "location_id": "loc-castle-north-tower",
+      "time_of_day": "dusk",
+      "emotion": "tension",
+      "conflict": "protagonist discovers the betrayal",
+      "importance": "high",
+      "beginning_text": "The tower staircase spiraled upward into darkness...",
+      "ending_text": "Behind the tapestry, a cold draft whispered of secrets untold.",
+      "transition_in": "dissolve",
+      "transition_out": "cut",
+      "characters_present": [
+        { "character_id": "chr-01H8X9A3B", "role": "protagonist" },
+        { "character_id": "chr-01H8X9A3C", "role": "antagonist" }
+      ],
+      "image_count": 4,
+      "audio_duration": 12.5,
+      "video_duration": 15.0,
+      "quality_score": 8.5,
+      "status": "completed",
+      "created_at": "2026-07-26T08:15:00Z",
+      "updated_at": "2026-07-26T10:00:00Z"
+    }
+  ]
+}

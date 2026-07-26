@@ -1,0 +1,2592 @@
+openapi: 3.0.3
+info:
+  title: CineOS — Cinematic Production Platform API
+  description: |
+    REST API for the CineOS novel-to-cinematic-video pipeline.
+
+    ## Architecture
+    CineOS converts novels into cinematic videos through a multi-stage pipeline:
+    Intake → Analysis → Verification → Prompt Planning → Render → Assembly → Audit.
+
+    The API exposes endpoints for worker management, job scheduling, content
+    generation (images, voice, animation, rendering), quality control, and
+    webhook integrations with n8n automation workflows.
+
+    ## Authentication
+    All endpoints under `/api/` require a Bearer token in the `Authorization` header.
+    Webhook endpoints (`/webhook/`) use shared-secret HMAC verification.
+    Health endpoints (`/health/`) are unauthenticated.
+
+    ## Rate Limits
+    - Image generation: 30 requests/minute per worker
+    - Voice generation: 60 requests/minute per worker
+    - Job creation: 100 requests/minute per project
+    - All other endpoints: 200 requests/minute per worker
+  version: 1.0.0
+  contact:
+    name: CineOS Team
+    email: api@cineos.dev
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: http://localhost:8000
+    description: Local development
+  - url: https://api.cineos.dev
+    description: Production
+
+tags:
+  - name: Workers
+    description: Worker registration, heartbeat, and lifecycle
+  - name: Jobs
+    description: Job creation, assignment, and state management
+  - name: Image Generation
+    description: AI image generation and upscaling
+  - name: Voice Generation
+    description: Text-to-speech audio generation
+  - name: Quality
+    description: Quality review, scoring, and repair
+  - name: Animation
+    description: Image-to-animation conversion
+  - name: Render
+    description: Video clip rendering and final assembly
+  - name: Webhooks
+    description: n8n webhook integrations
+  - name: Health
+    description: System health and readiness checks
+
+# ────────────────────────────────────────────────────────────────
+# PATHS
+# ────────────────────────────────────────────────────────────────
+paths:
+
+  # ── Worker Endpoints ──────────────────────────────────────────
+
+  /api/workers:
+    get:
+      operationId: listWorkers
+      summary: List all registered workers
+      tags: [Workers]
+      parameters:
+        - $ref: '#/components/parameters/WorkerTypeFilter'
+        - $ref: '#/components/parameters/WorkerStatusFilter'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/OffsetParam'
+      responses:
+        '200':
+          description: Paginated list of workers
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerListResponse'
+              example:
+                total: 3
+                offset: 0
+                limit: 50
+                workers:
+                  - worker_id: "wk-01H8X9A3B"
+                    worker_type: "image_worker"
+                    hostname: "gpu-node-01"
+                    status: "online"
+                    capabilities:
+                      - "image_generation"
+                      - "upscaling"
+                    max_concurrent_jobs: 4
+                    current_job_count: 1
+                    last_heartbeat: "2026-07-26T10:15:30Z"
+                    registered_at: "2026-07-26T08:00:00Z"
+                    metadata:
+                      gpu_model: "NVIDIA RTX 4090"
+                      vram_gb: 24
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workers/{worker_id}:
+    parameters:
+      - $ref: '#/components/parameters/WorkerIdParam'
+    get:
+      operationId: getWorker
+      summary: Get worker details
+      tags: [Workers]
+      responses:
+        '200':
+          description: Worker details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Worker'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: deregisterWorker
+      summary: Deregister a worker
+      tags: [Workers]
+      description: |
+        Removes a worker from the registry. In-progress jobs are reassigned.
+        The worker should call this before shutting down gracefully.
+      responses:
+        '204':
+          description: Worker deregistered successfully
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workers/register:
+    post:
+      operationId: registerWorker
+      summary: Register a new worker
+      tags: [Workers]
+      description: |
+        Register a compute worker with the platform. The worker provides its
+        type, hostname, capabilities, and maximum concurrent job count.
+        Registration returns a worker_id used for all subsequent calls.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerRegistration'
+            example:
+              worker_type: "image_worker"
+              hostname: "gpu-node-01"
+              capabilities:
+                - "image_generation"
+                - "upscaling"
+              max_concurrent_jobs: 4
+              metadata:
+                gpu_model: "NVIDIA RTX 4090"
+                vram_gb: 24
+      responses:
+        '201':
+          description: Worker registered successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WorkerRegistrationResponse'
+          headers:
+            Location:
+              description: URL of the newly created worker
+              schema:
+                type: string
+                example: /api/workers/wk-01H8X9A3B
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: Worker with this hostname already registered
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/workers/{worker_id}/heartbeat:
+    put:
+      operationId: workerHeartbeat
+      summary: Worker heartbeat
+      tags: [Workers]
+      description: |
+        Workers call this endpoint periodically to signal they are alive.
+        If no heartbeat is received within the configured TTL (default 60s),
+        the worker is marked offline and its jobs are rescheduled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/WorkerHeartbeat'
+            example:
+              current_job_count: 2
+              status: "busy"
+              uptime_seconds: 3600
+              resource_usage:
+                cpu_percent: 45.2
+                memory_percent: 62.1
+                gpu_percent: 88.5
+      parameters:
+        - $ref: '#/components/parameters/WorkerIdParam'
+      responses:
+        '200':
+          description: Heartbeat acknowledged
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HeartbeatResponse'
+              example:
+                acknowledged: true
+                next_heartbeat_due: "2026-07-26T10:16:30Z"
+                pending_jobs: 0
+                shutdown_requested: false
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  parameters:
+    WorkerIdParam:
+      name: worker_id
+      in: path
+      required: true
+      schema:
+        type: string
+      example: "wk-01H8X9A3B"
+      description: Unique worker identifier
+
+  # ── Job Endpoints ─────────────────────────────────────────────
+
+  /api/jobs:
+    post:
+      operationId: createJob
+      summary: Create a new job
+      tags: [Jobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCreate'
+            example:
+              project_id: "proj-01H8X9A3B"
+              job_type: "image_generation"
+              priority: 5
+              payload:
+                scene_id: "scn-01H8X9A3B"
+                shot_index: 0
+                prompt: "A medieval castle at sunset, cinematic lighting, 4K"
+                negative_prompt: "blurry, low quality, watermark"
+                width: 1024
+                height: 576
+                seed: 42
+              callback_url: "https://n8n.cineos.dev/webhook/render_callback"
+              dependencies: []
+              max_retries: 3
+              timeout_seconds: 300
+      responses:
+        '201':
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    get:
+      operationId: listJobs
+      summary: List jobs with filters
+      tags: [Jobs]
+      parameters:
+        - name: state
+          in: query
+          description: Filter by job state
+          schema:
+            $ref: '#/components/schemas/JobState'
+        - name: worker_id
+          in: query
+          description: Filter by assigned worker
+          schema:
+            type: string
+        - name: project_id
+          in: query
+          description: Filter by project
+          schema:
+            type: string
+        - name: job_type
+          in: query
+          description: Filter by job type
+          schema:
+            type: string
+            enum:
+              - image_generation
+              - upscaling
+              - voice_generation
+              - animation
+              - render_clip
+              - render_assembly
+              - quality_review
+              - quality_repair
+        - name: sort_by
+          in: query
+          description: Sort field
+          schema:
+            type: string
+            enum: [created_at, priority, updated_at]
+            default: created_at
+        - name: sort_order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/OffsetParam'
+      responses:
+        '200':
+          description: Paginated job list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobListResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /api/jobs/{job_id}:
+    parameters:
+      - name: job_id
+        in: path
+        required: true
+        schema:
+          type: string
+        example: "job-01H8X9A3B"
+    get:
+      operationId: getJob
+      summary: Get job details
+      tags: [Jobs]
+      responses:
+        '200':
+          description: Job details with full state history
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    delete:
+      operationId: cancelJob
+      summary: Cancel a job
+      tags: [Jobs]
+      description: |
+        Cancel a pending or in-progress job. If the job is assigned to a worker,
+        the worker is notified. Completed jobs cannot be cancelled.
+      responses:
+        '200':
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          description: Job cannot be cancelled (already completed or failed)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/jobs/{job_id}/assign:
+    put:
+      operationId: assignJob
+      summary: Assign a job to a worker
+      tags: [Jobs]
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [worker_id]
+              properties:
+                worker_id:
+                  type: string
+                  description: ID of the worker to assign the job to
+            example:
+              worker_id: "wk-01H8X9A3B"
+      responses:
+        '200':
+          description: Job assigned
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: Worker is at capacity or offline
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/jobs/{job_id}/start:
+    put:
+      operationId: startJob
+      summary: Mark job as started
+      tags: [Jobs]
+      description: Called by the worker when it begins processing the job.
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                worker_id:
+                  type: string
+                started_at:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Job marked as started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/jobs/{job_id}/complete:
+    put:
+      operationId: completeJob
+      summary: Mark job as completed
+      tags: [Jobs]
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobCompleteRequest'
+            example:
+              result:
+                image_id: "img-01H8X9A3B"
+                image_path: "/generated/images/img-01H8X9A3B.png"
+                backend_used: "pollinations"
+                duration_seconds: 12.4
+              quality_score: 8.5
+      responses:
+        '200':
+          description: Job completed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/jobs/{job_id}/fail:
+    put:
+      operationId: failJob
+      summary: Mark job as failed
+      tags: [Jobs]
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JobFailRequest'
+            example:
+              error: "Backend pollinations returned HTTP 503"
+              error_code: "BACKEND_UNAVAILABLE"
+              retryable: true
+              stack_trace: "Traceback (most recent call last)..."
+      responses:
+        '200':
+          description: Job marked as failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Image Generation ──────────────────────────────────────────
+
+  /api/generate/image:
+    post:
+      operationId: generateImage
+      summary: Generate an image from a prompt
+      tags: [Image Generation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ImageGenerationRequest'
+            example:
+              prompt: "A medieval castle at sunset, cinematic lighting, epic wide shot, 4K detail"
+              negative_prompt: "blurry, low quality, watermark, text, deformed"
+              width: 1024
+              height: 576
+              seed: 42
+              style: "cinematic"
+              scene_id: "scn-01H8X9A3B"
+              shot_index: 0
+              backend_preference: "pollinations"
+              callback_url: "https://n8n.cineos.dev/webhook/quality_callback"
+      responses:
+        '202':
+          description: Image generation accepted (async)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageGenerationResponse'
+        '200':
+          description: Image generated synchronously
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/generate/image/upscale:
+    post:
+      operationId: upscaleImage
+      summary: Upscale an existing image
+      tags: [Image Generation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [image_id]
+              properties:
+                image_id:
+                  type: string
+                  description: ID of the image to upscale
+                scale_factor:
+                  type: integer
+                  enum: [2, 4]
+                  default: 2
+                  description: Upscale multiplier
+                backend_preference:
+                  type: string
+                  description: Preferred upscaling backend
+                callback_url:
+                  type: string
+                  format: uri
+                  description: URL to POST result when complete
+            example:
+              image_id: "img-01H8X9A3B"
+              scale_factor: 2
+              backend_preference: "esrgan"
+      responses:
+        '202':
+          description: Upscale job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageGenerationResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/generate/image/{image_id}:
+    get:
+      operationId: getGeneratedImage
+      summary: Get generated image details
+      tags: [Image Generation]
+      parameters:
+        - name: image_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Image metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImageResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Voice Generation ──────────────────────────────────────────
+
+  /api/generate/voice:
+    post:
+      operationId: generateVoice
+      summary: Generate text-to-speech audio
+      tags: [Voice Generation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VoiceGenerationRequest'
+            example:
+              text: "The ancient castle stood tall against the crimson sky, its towers piercing the clouds."
+              scene_id: "scn-01H8X9A3B"
+              voice: "en-US-GuyNeural"
+              speed: 1.0
+              emotion: "dramatic"
+              backend_preference: "edge_tts"
+              callback_url: "https://n8n.cineos.dev/webhook/render_callback"
+      responses:
+        '202':
+          description: Voice generation accepted (async)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceGenerationResponse'
+        '200':
+          description: Voice generated synchronously
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceResult'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '422':
+          $ref: '#/components/responses/UnprocessableEntity'
+        '429':
+          $ref: '#/components/responses/RateLimited'
+
+  /api/generate/voice/{voice_id}:
+    get:
+      operationId: getGeneratedVoice
+      summary: Get generated audio details
+      tags: [Voice Generation]
+      parameters:
+        - name: voice_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Audio metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VoiceResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Quality ───────────────────────────────────────────────────
+
+  /api/quality/review:
+    post:
+      operationId: submitReview
+      summary: Submit content for quality review
+      tags: [Quality]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReviewSubmitRequest'
+            example:
+              entity_type: "image"
+              entity_id: "img-01H8X9A3B"
+              project_id: "proj-01H8X9A3B"
+              scene_id: "scn-01H8X9A3B"
+              review_criteria:
+                - "visual_quality"
+                - "character_consistency"
+                - "world_consistency"
+                - "scene_alignment"
+              callback_url: "https://n8n.cineos.dev/webhook/quality_callback"
+      responses:
+        '202':
+          description: Review submitted (async)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/quality/review/{review_id}:
+    get:
+      operationId: getReviewResult
+      summary: Get quality review result
+      tags: [Quality]
+      parameters:
+        - name: review_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Review result with scores
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  /api/quality/repair:
+    post:
+      operationId: submitRepair
+      summary: Submit a repair job for rejected content
+      tags: [Quality]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepairRequest'
+            example:
+              entity_type: "image"
+              entity_id: "img-01H8X9A3B"
+              review_id: "rev-01H8X9A3B"
+              issues:
+                - "Character hair color does not match DNA: expected blonde, got brown"
+                - "Background architecture inconsistent with world bible"
+              repair_strategy: "regenerate_with_constrained_prompt"
+              priority: 8
+      responses:
+        '202':
+          description: Repair job accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepairAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+
+  /api/quality/scores/{entity_type}/{entity_id}:
+    get:
+      operationId: getQualityScores
+      summary: Get quality scores for an entity
+      tags: [Quality]
+      parameters:
+        - name: entity_type
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [image, audio, animation, video, scene]
+        - name: entity_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Quality scores
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QualityScores'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Animation ─────────────────────────────────────────────────
+
+  /api/animate:
+    post:
+      operationId: animateImage
+      summary: Animate a still image
+      tags: [Animation]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AnimationRequest'
+            example:
+              image_id: "img-01H8X9A3B"
+              scene_id: "scn-01H8X9A3B"
+              animation_type: "ken_burns"
+              duration_seconds: 5.0
+              motion_params:
+                zoom_start: 1.0
+                zoom_end: 1.2
+                pan_x: 0.1
+                pan_y: -0.05
+              output_format: "mp4"
+              fps: 24
+              backend_preference: "ffmpeg"
+      responses:
+        '202':
+          description: Animation accepted (async)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnimationAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/animate/{animation_id}:
+    get:
+      operationId: getAnimationResult
+      summary: Get animation result
+      tags: [Animation]
+      parameters:
+        - name: animation_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Animation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnimationResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Render ────────────────────────────────────────────────────
+
+  /api/render:
+    post:
+      operationId: renderClip
+      summary: Render a video clip from animation + audio
+      tags: [Render]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenderRequest'
+            example:
+              scene_id: "scn-01H8X9A3B"
+              animation_ids:
+                - "anim-01H8X9A3B"
+                - "anim-01H8X9A3C"
+              audio_id: "aud-01H8X9A3B"
+              transition: "crossfade"
+              transition_duration: 0.5
+              output_format: "mp4"
+              resolution: "1920x1080"
+              codec: "h264"
+              quality_preset: "high"
+      responses:
+        '202':
+          description: Render accepted (async)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenderAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/render/assemble:
+    post:
+      operationId: assembleFinalVideo
+      summary: Assemble final video from rendered clips
+      tags: [Render]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AssemblyRequest'
+            example:
+              project_id: "proj-01H8X9A3B"
+              render_ids:
+                - "rnd-01H8X9A3B"
+                - "rnd-01H8X9A3C"
+                - "rnd-01H8X9A3D"
+              global_transition: "fade"
+              global_transition_duration: 1.0
+              title_card:
+                enabled: true
+                text: "The Medieval Chronicles"
+                duration: 5.0
+              credits:
+                enabled: true
+                text: "Created with CineOS"
+                duration: 3.0
+              output_format: "mp4"
+              resolution: "1920x1080"
+              codec: "h264"
+              audio_mix: true
+              background_music:
+                enabled: false
+      responses:
+        '202':
+          description: Assembly accepted (async)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenderAccepted'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '500':
+          $ref: '#/components/responses/InternalError'
+
+  /api/render/{render_id}:
+    get:
+      operationId: getRenderResult
+      summary: Get render result
+      tags: [Render]
+      parameters:
+        - name: render_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Render result with video metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RenderResult'
+        '404':
+          $ref: '#/components/responses/NotFound'
+
+  # ── Webhooks (n8n) ───────────────────────────────────────────
+
+  /webhook/telegram_intake:
+    post:
+      operationId: telegramIntake
+      summary: Telegram intake webhook
+      tags: [Webhooks]
+      description: |
+        Receives messages from the Telegram bot via n8n. Processes novel text
+        submissions and project creation requests forwarded from the
+        Telegram bridge.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TelegramIntakePayload'
+            example:
+              update_id: 123456789
+              message:
+                message_id: 42
+                from:
+                  id: 987654321
+                  first_name: "Alice"
+                  username: "alice_writer"
+                chat:
+                  id: 987654321
+                  type: "private"
+                date: 1722000000
+                text: "/new_project The Medieval Chronicles"
+                entities:
+                  - type: "bot_command"
+                    offset: 0
+                    length: 11
+              project_context:
+                project_id: "proj-01H8X9A3B"
+                user_id: "tg-987654321"
+                intent: "new_project"
+      responses:
+        '200':
+          description: Webhook processed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "ok"
+                  project_id:
+                    type: string
+                    example: "proj-01H8X9A3B"
+        '400':
+          description: Invalid payload
+        '500':
+          description: Processing failed
+
+  /webhook/orchestrator:
+    post:
+      operationId: orchestratorTrigger
+      summary: Orchestrator trigger webhook
+      tags: [Webhooks]
+      description: |
+        Triggers the pipeline orchestrator to advance a project to the next
+        stage. Called by n8n when upstream analysis is complete.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrchestratorTriggerPayload'
+            example:
+              project_id: "proj-01H8X9A3B"
+              trigger_stage: "render"
+              force: false
+              config_overrides:
+                image_backend: "pollinations"
+                tts_backend: "edge_tts"
+                max_concurrent: 4
+              callback_url: "https://n8n.cineos.dev/webhook/render_callback"
+      responses:
+        '202':
+          description: Orchestrator triggered
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: "accepted"
+                  project_id:
+                    type: string
+                  triggered_stage:
+                    type: string
+        '400':
+          description: Invalid trigger
+        '409':
+          description: Project is already processing
+        '500':
+          description: Trigger failed
+
+  /webhook/quality_callback:
+    post:
+      operationId: qualityCallback
+      summary: Quality review callback
+      tags: [Webhooks]
+      description: |
+        Callback URL for async quality review results. n8n calls this when
+        the quality worker completes its review.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QualityCallbackPayload'
+            example:
+              review_id: "rev-01H8X9A3B"
+              entity_type: "image"
+              entity_id: "img-01H8X9A3B"
+              project_id: "proj-01H8X9A3B"
+              overall_score: 8.5
+              scores:
+                visual_quality: 9.0
+                character_consistency: 8.0
+                world_consistency: 8.5
+                scene_alignment: 8.5
+              passed: true
+              issues: []
+              reviewed_at: "2026-07-26T10:20:00Z"
+      responses:
+        '200':
+          description: Callback processed
+        '400':
+          description: Invalid payload
+
+  /webhook/render_callback:
+    post:
+      operationId: renderCallback
+      summary: Render complete callback
+      tags: [Webhooks]
+      description: |
+        Callback URL for async render completions. Called by n8n when a
+        render or assembly job finishes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RenderCallbackPayload'
+            example:
+              render_id: "rnd-01H8X9A3B"
+              project_id: "proj-01H8X9A3B"
+              render_type: "clip"
+              status: "completed"
+              output_path: "/generated/video/rnd-01H8X9A3B.mp4"
+              duration_seconds: 120.5
+              file_size_bytes: 18432000
+              resolution: "1920x1080"
+              completed_at: "2026-07-26T10:25:00Z"
+      responses:
+        '200':
+          description: Callback processed
+        '400':
+          description: Invalid payload
+
+  # ── Health ────────────────────────────────────────────────────
+
+  /health:
+    get:
+      operationId: healthCheck
+      summary: System health check
+      tags: [Health]
+      description: |
+        Returns overall system health including database, Redis, n8n,
+        and worker pool status. Unauthenticated.
+      responses:
+        '200':
+          description: System is healthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+              example:
+                status: "healthy"
+                version: "1.0.0"
+                uptime_seconds: 86400
+                timestamp: "2026-07-26T10:30:00Z"
+                components:
+                  database:
+                    status: "healthy"
+                    latency_ms: 2
+                  redis:
+                    status: "healthy"
+                    latency_ms: 1
+                  n8n:
+                    status: "healthy"
+                    latency_ms: 15
+                  worker_pool:
+                    status: "healthy"
+                    active_workers: 3
+                    total_workers: 3
+        '503':
+          description: System is unhealthy
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/HealthResponse'
+
+  /health/ready:
+    get:
+      operationId: readinessCheck
+      summary: Readiness probe
+      tags: [Health]
+      description: |
+        Kubernetes readiness probe. Returns 200 when the service is ready
+        to accept traffic (database connected, workers available).
+      responses:
+        '200':
+          description: Ready
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ready:
+                    type: boolean
+                    example: true
+        '503':
+          description: Not ready
+
+  /health/live:
+    get:
+      operationId: livenessCheck
+      summary: Liveness probe
+      tags: [Health]
+      description: |
+        Kubernetes liveness probe. Returns 200 if the process is alive
+        and not deadlocked.
+      responses:
+        '200':
+          description: Alive
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  alive:
+                    type: boolean
+                    example: true
+
+# ────────────────────────────────────────────────────────────────
+# COMPONENTS
+# ────────────────────────────────────────────────────────────────
+components:
+
+  # ── Security Schemes ──────────────────────────────────────────
+
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+    WebhookSecret:
+      type: apiKey
+      in: header
+      name: X-Webhook-Secret
+
+  # ── Reusable Parameters ───────────────────────────────────────
+
+  parameters:
+    LimitParam:
+      name: limit
+      in: query
+      description: Maximum number of items to return
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 50
+    OffsetParam:
+      name: offset
+      in: query
+      description: Number of items to skip
+      schema:
+        type: integer
+        minimum: 0
+        default: 0
+    WorkerTypeFilter:
+      name: worker_type
+      in: query
+      description: Filter by worker type
+      schema:
+        type: string
+        enum:
+          - image_worker
+          - voice_worker
+          - animation_worker
+          - render_worker
+          - quality_worker
+          - supervisor
+    WorkerStatusFilter:
+      name: status
+      in: query
+      description: Filter by worker status
+      schema:
+        type: string
+        enum: [online, offline, busy, draining]
+
+  # ── Reusable Responses ────────────────────────────────────────
+
+  responses:
+    BadRequest:
+      description: Invalid request parameters or body
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "VALIDATION_ERROR"
+              message: "Invalid request body"
+              details:
+                - field: "prompt"
+                  message: "must not be empty"
+    Unauthorized:
+      description: Missing or invalid authentication
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "UNAUTHORIZED"
+              message: "Invalid or expired token"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "NOT_FOUND"
+              message: "Resource not found"
+    UnprocessableEntity:
+      description: Request body is valid but semantically incorrect
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "UNPROCESSABLE_ENTITY"
+              message: "Prompt contains disallowed content"
+    RateLimited:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          headers:
+            Retry-After:
+              description: Seconds until the rate limit resets
+              schema:
+                type: integer
+                example: 30
+          example:
+            error:
+              code: "RATE_LIMITED"
+              message: "Rate limit exceeded, retry after 30s"
+    InternalError:
+      description: Internal server error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            error:
+              code: "INTERNAL_ERROR"
+              message: "An unexpected error occurred"
+
+  # ── Schemas ───────────────────────────────────────────────────
+
+  schemas:
+
+    # ── Worker Schemas ────────────────────────────────────────
+
+    WorkerType:
+      type: string
+      enum:
+        - image_worker
+        - voice_worker
+        - animation_worker
+        - render_worker
+        - quality_worker
+        - supervisor
+
+    WorkerStatus:
+      type: string
+      enum: [online, offline, busy, draining]
+
+    WorkerRegistration:
+      type: object
+      required: [worker_type, hostname, capabilities]
+      properties:
+        worker_type:
+          $ref: '#/components/schemas/WorkerType'
+        hostname:
+          type: string
+          description: Network hostname of the worker
+          example: "gpu-node-01"
+        capabilities:
+          type: array
+          items:
+            type: string
+          description: List of capabilities this worker supports
+          example: ["image_generation", "upscaling"]
+        max_concurrent_jobs:
+          type: integer
+          minimum: 1
+          maximum: 64
+          default: 4
+          description: Maximum jobs this worker can process simultaneously
+        metadata:
+          type: object
+          additionalProperties: true
+          description: Arbitrary metadata (GPU model, VRAM, etc.)
+          example:
+            gpu_model: "NVIDIA RTX 4090"
+            vram_gb: 24
+
+    WorkerRegistrationResponse:
+      type: object
+      properties:
+        worker_id:
+          type: string
+          description: Unique worker identifier
+          example: "wk-01H8X9A3B"
+        status:
+          type: string
+          example: "online"
+        registered_at:
+          type: string
+          format: date-time
+        heartbeat_interval_seconds:
+          type: integer
+          description: How often the worker must send heartbeats
+          example: 30
+
+    Worker:
+      type: object
+      properties:
+        worker_id:
+          type: string
+        worker_type:
+          $ref: '#/components/schemas/WorkerType'
+        hostname:
+          type: string
+        status:
+          $ref: '#/components/schemas/WorkerStatus'
+        capabilities:
+          type: array
+          items:
+            type: string
+        max_concurrent_jobs:
+          type: integer
+        current_job_count:
+          type: integer
+        last_heartbeat:
+          type: string
+          format: date-time
+        registered_at:
+          type: string
+          format: date-time
+        metadata:
+          type: object
+          additionalProperties: true
+
+    WorkerListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+        workers:
+          type: array
+          items:
+            $ref: '#/components/schemas/Worker'
+
+    WorkerHeartbeat:
+      type: object
+      properties:
+        current_job_count:
+          type: integer
+          minimum: 0
+        status:
+          type: string
+          enum: [idle, busy, draining]
+        uptime_seconds:
+          type: number
+        resource_usage:
+          type: object
+          properties:
+            cpu_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+            memory_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+            gpu_percent:
+              type: number
+              minimum: 0
+              maximum: 100
+
+    HeartbeatResponse:
+      type: object
+      properties:
+        acknowledged:
+          type: boolean
+        next_heartbeat_due:
+          type: string
+          format: date-time
+        pending_jobs:
+          type: integer
+        shutdown_requested:
+          type: boolean
+          description: If true, the worker should shut down gracefully
+
+    # ── Job Schemas ───────────────────────────────────────────
+
+    JobState:
+      type: string
+      enum:
+        - pending
+        - queued
+        - assigned
+        - running
+        - completed
+        - failed
+        - cancelled
+        - retrying
+
+    JobType:
+      type: string
+      enum:
+        - image_generation
+        - upscaling
+        - voice_generation
+        - animation
+        - render_clip
+        - render_assembly
+        - quality_review
+        - quality_repair
+
+    JobPriority:
+      type: integer
+      minimum: 1
+      maximum: 10
+      description: 1 = lowest, 10 = highest
+      default: 5
+
+    JobCreate:
+      type: object
+      required: [project_id, job_type, payload]
+      properties:
+        project_id:
+          type: string
+        job_type:
+          $ref: '#/components/schemas/JobType'
+        priority:
+          $ref: '#/components/schemas/JobPriority'
+        payload:
+          type: object
+          description: Job-type-specific payload data
+          additionalProperties: true
+        callback_url:
+          type: string
+          format: uri
+        dependencies:
+          type: array
+          items:
+            type: string
+          description: Job IDs that must complete before this job runs
+        max_retries:
+          type: integer
+          minimum: 0
+          maximum: 10
+          default: 3
+        timeout_seconds:
+          type: integer
+          minimum: 10
+          maximum: 3600
+          default: 300
+
+    Job:
+      type: object
+      properties:
+        job_id:
+          type: string
+        project_id:
+          type: string
+        job_type:
+          $ref: '#/components/schemas/JobType'
+        state:
+          $ref: '#/components/schemas/JobState'
+        priority:
+          type: integer
+        payload:
+          type: object
+          additionalProperties: true
+        result:
+          type: object
+          additionalProperties: true
+          nullable: true
+        worker_id:
+          type: string
+          nullable: true
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+        dependencies:
+          type: array
+          items:
+            type: string
+        retry_count:
+          type: integer
+        max_retries:
+          type: integer
+        error:
+          type: string
+          nullable: true
+        error_code:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    JobListResponse:
+      type: object
+      properties:
+        total:
+          type: integer
+        offset:
+          type: integer
+        limit:
+          type: integer
+        jobs:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+
+    JobCompleteRequest:
+      type: object
+      properties:
+        result:
+          type: object
+          description: Job-type-specific result data
+          additionalProperties: true
+        quality_score:
+          type: number
+          minimum: 0
+          maximum: 10
+          nullable: true
+
+    JobFailRequest:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
+          description: Human-readable error message
+        error_code:
+          type: string
+          description: Machine-readable error code
+          example: "BACKEND_UNAVAILABLE"
+        retryable:
+          type: boolean
+          default: true
+          description: Whether the job can be retried
+        stack_trace:
+          type: string
+
+    # ── Image Generation Schemas ──────────────────────────────
+
+    ImageGenerationRequest:
+      type: object
+      required: [prompt]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: Positive text prompt for image generation
+        negative_prompt:
+          type: string
+          maxLength: 2000
+          default: ""
+          description: Things to avoid in the generated image
+        width:
+          type: integer
+          minimum: 256
+          maximum: 4096
+          default: 1024
+        height:
+          type: integer
+          minimum: 256
+          maximum: 4096
+          default: 576
+        seed:
+          type: integer
+          minimum: 0
+          maximum: 4294967295
+          nullable: true
+          description: RNG seed for reproducibility
+        style:
+          type: string
+          enum: [cinematic, anime, realistic, painting, sketch, none]
+          default: "cinematic"
+        scene_id:
+          type: string
+          nullable: true
+        shot_index:
+          type: integer
+          minimum: 0
+          nullable: true
+        backend_preference:
+          type: string
+          nullable: true
+          description: Preferred generation backend (falls back to priority list)
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    ImageGenerationResponse:
+      type: object
+      description: Returned when generation is async (202 Accepted)
+      properties:
+        image_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing]
+        job_id:
+          type: string
+          nullable: true
+          description: Associated job ID if queued
+        estimated_wait_seconds:
+          type: integer
+          nullable: true
+
+    ImageResult:
+      type: object
+      properties:
+        image_id:
+          type: string
+        scene_id:
+          type: string
+          nullable: true
+        shot_index:
+          type: integer
+          nullable: true
+        image_path:
+          type: string
+        prompt:
+          type: string
+        negative_prompt:
+          type: string
+        width:
+          type: integer
+        height:
+          type: integer
+        seed:
+          type: integer
+          nullable: true
+        backend_used:
+          type: string
+        score:
+          type: number
+          nullable: true
+        is_upscaled:
+          type: boolean
+          default: false
+        upscale_factor:
+          type: integer
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Voice Generation Schemas ──────────────────────────────
+
+    VoiceGenerationRequest:
+      type: object
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 10000
+          description: Text to synthesize
+        scene_id:
+          type: string
+          nullable: true
+        voice:
+          type: string
+          nullable: true
+          description: Voice identifier (backend-specific)
+          example: "en-US-GuyNeural"
+        speed:
+          type: number
+          minimum: 0.5
+          maximum: 2.0
+          default: 1.0
+        emotion:
+          type: string
+          enum: [neutral, happy, sad, angry, dramatic, whisper, narrator]
+          default: "neutral"
+        backend_preference:
+          type: string
+          nullable: true
+          description: Preferred TTS backend
+          example: "edge_tts"
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    VoiceGenerationResponse:
+      type: object
+      description: Returned when generation is async (202 Accepted)
+      properties:
+        voice_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing]
+        job_id:
+          type: string
+          nullable: true
+        estimated_wait_seconds:
+          type: integer
+          nullable: true
+
+    VoiceResult:
+      type: object
+      properties:
+        voice_id:
+          type: string
+        scene_id:
+          type: string
+          nullable: true
+        audio_path:
+          type: string
+        text:
+          type: string
+        voice:
+          type: string
+          nullable: true
+        duration_seconds:
+          type: number
+        sample_rate:
+          type: integer
+          example: 24000
+        backend_used:
+          type: string
+        emotion:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Quality Schemas ───────────────────────────────────────
+
+    ReviewSubmitRequest:
+      type: object
+      required: [entity_type, entity_id, project_id]
+      properties:
+        entity_type:
+          type: string
+          enum: [image, audio, animation, video, scene]
+        entity_id:
+          type: string
+        project_id:
+          type: string
+        scene_id:
+          type: string
+          nullable: true
+        review_criteria:
+          type: array
+          items:
+            type: string
+            enum:
+              - visual_quality
+              - audio_quality
+              - character_consistency
+              - world_consistency
+              - scene_alignment
+              - novel_fidelity
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    ReviewAccepted:
+      type: object
+      properties:
+        review_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing]
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+
+    ReviewResult:
+      type: object
+      properties:
+        review_id:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        project_id:
+          type: string
+        status:
+          type: string
+          enum: [pending, processing, completed, failed]
+        overall_score:
+          type: number
+          minimum: 0
+          maximum: 10
+          nullable: true
+        scores:
+          type: object
+          properties:
+            visual_quality:
+              type: number
+            audio_quality:
+              type: number
+            character_consistency:
+              type: number
+            world_consistency:
+              type: number
+            scene_alignment:
+              type: number
+            novel_fidelity:
+              type: number
+          nullable: true
+        passed:
+          type: boolean
+          description: Whether the entity passed all quality thresholds
+        issues:
+          type: array
+          items:
+            type: string
+        recommendations:
+          type: array
+          items:
+            type: string
+        reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    RepairRequest:
+      type: object
+      required: [entity_type, entity_id, issues]
+      properties:
+        entity_type:
+          type: string
+          enum: [image, audio, animation, video]
+        entity_id:
+          type: string
+        review_id:
+          type: string
+          nullable: true
+        issues:
+          type: array
+          items:
+            type: string
+          minItems: 1
+        repair_strategy:
+          type: string
+          enum:
+            - regenerate_with_constrained_prompt
+            - adjust_parameters
+            - upscale_and_enhance
+            - manual_review
+          default: "regenerate_with_constrained_prompt"
+        priority:
+          $ref: '#/components/schemas/JobPriority'
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    RepairAccepted:
+      type: object
+      properties:
+        repair_job_id:
+          type: string
+        original_entity_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing]
+
+    QualityScores:
+      type: object
+      properties:
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        overall_score:
+          type: number
+        scores:
+          type: object
+          properties:
+            visual_quality:
+              type: number
+            audio_quality:
+              type: number
+            character_consistency:
+              type: number
+            world_consistency:
+              type: number
+            scene_alignment:
+              type: number
+            novel_fidelity:
+              type: number
+        review_count:
+          type: integer
+        last_reviewed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── Animation Schemas ─────────────────────────────────────
+
+    AnimationType:
+      type: string
+      enum:
+        - ken_burns
+        - parallax
+        - particle
+        - lip_sync
+        - character_motion
+        - camera_move
+
+    AnimationRequest:
+      type: object
+      required: [image_id]
+      properties:
+        image_id:
+          type: string
+        scene_id:
+          type: string
+          nullable: true
+        animation_type:
+          $ref: '#/components/schemas/AnimationType'
+          default: "ken_burns"
+        duration_seconds:
+          type: number
+          minimum: 0.5
+          maximum: 30.0
+          default: 5.0
+        motion_params:
+          type: object
+          description: Animation-type-specific parameters
+          additionalProperties: true
+          example:
+            zoom_start: 1.0
+            zoom_end: 1.2
+            pan_x: 0.1
+            pan_y: -0.05
+        output_format:
+          type: string
+          enum: [mp4, webm, gif]
+          default: "mp4"
+        fps:
+          type: integer
+          minimum: 12
+          maximum: 60
+          default: 24
+        backend_preference:
+          type: string
+          nullable: true
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    AnimationAccepted:
+      type: object
+      properties:
+        animation_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing]
+        job_id:
+          type: string
+          nullable: true
+
+    AnimationResult:
+      type: object
+      properties:
+        animation_id:
+          type: string
+        image_id:
+          type: string
+        scene_id:
+          type: string
+          nullable: true
+        animation_type:
+          $ref: '#/components/schemas/AnimationType'
+        output_path:
+          type: string
+        output_format:
+          type: string
+        duration_seconds:
+          type: number
+        fps:
+          type: integer
+        resolution:
+          type: string
+          example: "1024x576"
+        file_size_bytes:
+          type: integer
+        backend_used:
+          type: string
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        created_at:
+          type: string
+          format: date-time
+
+    # ── Render Schemas ────────────────────────────────────────
+
+    RenderRequest:
+      type: object
+      required: [scene_id]
+      properties:
+        scene_id:
+          type: string
+        animation_ids:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: Ordered list of animation clips to combine
+        audio_id:
+          type: string
+          nullable: true
+          description: Audio track to overlay
+        transition:
+          type: string
+          enum: [cut, fade, crossfade, dissolve, wipe]
+          default: "crossfade"
+        transition_duration:
+          type: number
+          minimum: 0
+          maximum: 3.0
+          default: 0.5
+        output_format:
+          type: string
+          enum: [mp4, webm]
+          default: "mp4"
+        resolution:
+          type: string
+          enum: ["1920x1080", "1280x720", "3840x2160"]
+          default: "1920x1080"
+        codec:
+          type: string
+          enum: [h264, h265, vp9]
+          default: "h264"
+        quality_preset:
+          type: string
+          enum: [draft, low, medium, high, ultra]
+          default: "high"
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    AssemblyRequest:
+      type: object
+      required: [project_id, render_ids]
+      properties:
+        project_id:
+          type: string
+        render_ids:
+          type: array
+          items:
+            type: string
+          minItems: 1
+          description: Ordered list of rendered clips
+        global_transition:
+          type: string
+          enum: [cut, fade, crossfade, dissolve]
+          default: "fade"
+        global_transition_duration:
+          type: number
+          minimum: 0
+          maximum: 3.0
+          default: 1.0
+        title_card:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: false
+            text:
+              type: string
+            duration:
+              type: number
+              minimum: 1
+              maximum: 15
+              default: 5.0
+            style:
+              type: string
+              enum: [fade_in, typewriter, cinematic]
+              default: "cinematic"
+        credits:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: false
+            text:
+              type: string
+            duration:
+              type: number
+              minimum: 1
+              maximum: 30
+              default: 3.0
+        output_format:
+          type: string
+          enum: [mp4, webm]
+          default: "mp4"
+        resolution:
+          type: string
+          enum: ["1920x1080", "1280x720", "3840x2160"]
+          default: "1920x1080"
+        codec:
+          type: string
+          enum: [h264, h265, vp9]
+          default: "h264"
+        audio_mix:
+          type: boolean
+          default: true
+        background_music:
+          type: object
+          properties:
+            enabled:
+              type: boolean
+              default: false
+            track_id:
+              type: string
+              nullable: true
+            volume:
+              type: number
+              minimum: 0
+              maximum: 1
+              default: 0.2
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    RenderAccepted:
+      type: object
+      properties:
+        render_id:
+          type: string
+        status:
+          type: string
+          enum: [queued, processing]
+        job_id:
+          type: string
+          nullable: true
+        estimated_wait_seconds:
+          type: integer
+          nullable: true
+
+    RenderResult:
+      type: object
+      properties:
+        render_id:
+          type: string
+        project_id:
+          type: string
+        render_type:
+          type: string
+          enum: [clip, assembly]
+        scene_id:
+          type: string
+          nullable: true
+        output_path:
+          type: string
+        output_format:
+          type: string
+        resolution:
+          type: string
+        codec:
+          type: string
+        duration_seconds:
+          type: number
+        file_size_bytes:
+          type: integer
+        status:
+          type: string
+          enum: [processing, completed, failed]
+        error:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+
+    # ── Webhook Payload Schemas ───────────────────────────────
+
+    TelegramIntakePayload:
+      type: object
+      required: [update_id, message]
+      properties:
+        update_id:
+          type: integer
+          description: Telegram update ID
+        message:
+          type: object
+          properties:
+            message_id:
+              type: integer
+            from:
+              type: object
+              properties:
+                id:
+                  type: integer
+                first_name:
+                  type: string
+                username:
+                  type: string
+            chat:
+              type: object
+              properties:
+                id:
+                  type: integer
+                type:
+                  type: string
+                  enum: [private, group, supergroup, channel]
+            date:
+              type: integer
+              description: Unix timestamp
+            text:
+              type: string
+            entities:
+              type: array
+              items:
+                type: object
+                properties:
+                  type:
+                    type: string
+                  offset:
+                    type: integer
+                  length:
+                    type: integer
+        project_context:
+          type: object
+          properties:
+            project_id:
+              type: string
+            user_id:
+              type: string
+            intent:
+              type: string
+              enum:
+                - new_project
+                - upload_novel
+                - check_status
+                - cancel_project
+                - retry_failed
+
+    OrchestratorTriggerPayload:
+      type: object
+      required: [project_id, trigger_stage]
+      properties:
+        project_id:
+          type: string
+        trigger_stage:
+          type: string
+          enum:
+            - intake
+            - analysis
+            - verification
+            - prompt_plan
+            - render
+            - assembly
+            - audit
+            - full_pipeline
+        force:
+          type: boolean
+          default: false
+          description: Skip dependency checks
+        config_overrides:
+          type: object
+          properties:
+            image_backend:
+              type: string
+            tts_backend:
+              type: string
+            max_concurrent:
+              type: integer
+            quality_threshold:
+              type: number
+          additionalProperties: true
+        callback_url:
+          type: string
+          format: uri
+          nullable: true
+
+    QualityCallbackPayload:
+      type: object
+      required: [review_id, entity_type, entity_id, overall_score, passed]
+      properties:
+        review_id:
+          type: string
+        entity_type:
+          type: string
+        entity_id:
+          type: string
+        project_id:
+          type: string
+        overall_score:
+          type: number
+        scores:
+          type: object
+          additionalProperties: true
+        passed:
+          type: boolean
+        issues:
+          type: array
+          items:
+            type: string
+        reviewed_at:
+          type: string
+          format: date-time
+
+    RenderCallbackPayload:
+      type: object
+      required: [render_id, project_id, status]
+      properties:
+        render_id:
+          type: string
+        project_id:
+          type: string
+        render_type:
+          type: string
+          enum: [clip, assembly]
+        status:
+          type: string
+          enum: [completed, failed]
+        output_path:
+          type: string
+          nullable: true
+        duration_seconds:
+          type: number
+          nullable: true
+        file_size_bytes:
+          type: integer
+          nullable: true
+        resolution:
+          type: string
+          nullable: true
+        error:
+          type: string
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+
+    # ── Error Schema ──────────────────────────────────────────
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: Machine-readable error code
+              example: "VALIDATION_ERROR"
+            message:
+              type: string
+              description: Human-readable error message
+              example: "Invalid request body"
+            details:
+              type: array
+              items:
+                type: object
+                properties:
+                  field:
+                    type: string
+                  message:
+                    type: string
+                  code:
+                    type: string
+            request_id:
+              type: string
+              description: Unique request ID for debugging
+
+    # ── Health Schema ─────────────────────────────────────────
+
+    HealthResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        version:
+          type: string
+        uptime_seconds:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        components:
+          type: object
+          properties:
+            database:
+              $ref: '#/components/schemas/HealthComponent'
+            redis:
+              $ref: '#/components/schemas/HealthComponent'
+            n8n:
+              $ref: '#/components/schemas/HealthComponent'
+            worker_pool:
+              type: object
+              properties:
+                status:
+                  type: string
+                  enum: [healthy, degraded, unhealthy]
+                active_workers:
+                  type: integer
+                total_workers:
+                  type: integer
+
+    HealthComponent:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded, unhealthy]
+        latency_ms:
+          type: integer
+          nullable: true
+        error:
+          type: string
+          nullable: true
+
+security:
+  - BearerAuth: []

@@ -1,0 +1,211 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/job.json",
+  "title": "Job",
+  "description": "A discrete unit of work in the CineOS pipeline — managed by the job queue and executed by workers.",
+  "type": "object",
+  "required": ["job_id", "project_id", "job_type", "state", "priority", "created_at", "updated_at"],
+  "properties": {
+    "job_id": {
+      "type": "string",
+      "description": "Unique job identifier",
+      "examples": ["job-01H8X9A3B"]
+    },
+    "project_id": {
+      "type": "string",
+      "description": "Reference to the owning project",
+      "examples": ["proj-01H8X9A3B"]
+    },
+    "job_type": {
+      "type": "string",
+      "enum": [
+        "image_generation",
+        "upscaling",
+        "voice_generation",
+        "animation",
+        "render_clip",
+        "render_assembly",
+        "quality_review",
+        "quality_repair"
+      ],
+      "description": "Category of work this job performs",
+      "examples": ["image_generation"]
+    },
+    "state": {
+      "type": "string",
+      "enum": ["pending", "queued", "assigned", "running", "completed", "failed", "cancelled", "retrying"],
+      "description": "Current lifecycle state",
+      "examples": ["running"]
+    },
+    "priority": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Job priority — 1 = lowest, 10 = highest",
+      "examples": [5]
+    },
+    "payload": {
+      "type": "object",
+      "description": "Job-type-specific input data. Schema varies by job_type.",
+      "additionalProperties": true,
+      "examples": [
+        {
+          "scene_id": "scn-01H8X9A3B",
+          "shot_index": 0,
+          "prompt": "A medieval castle at sunset, cinematic lighting, 4K",
+          "negative_prompt": "blurry, low quality, watermark",
+          "width": 1024,
+          "height": 576,
+          "seed": 42
+        }
+      ]
+    },
+    "result": {
+      "type": "object",
+      "nullable": true,
+      "description": "Job-type-specific output data. Populated on completion.",
+      "additionalProperties": true,
+      "examples": [
+        {
+          "image_id": "img-01H8X9A3B",
+          "image_path": "/generated/images/img-01H8X9A3B.png",
+          "backend_used": "pollinations",
+          "duration_seconds": 12.4
+        }
+      ]
+    },
+    "worker_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "ID of the worker assigned to this job",
+      "examples": ["wk-01H8X9A3B"]
+    },
+    "callback_url": {
+      "type": "string",
+      "format": "uri",
+      "nullable": true,
+      "description": "URL to POST when the job completes or fails",
+      "examples": ["https://n8n.cineos.dev/webhook/render_callback"]
+    },
+    "dependencies": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "description": "Job IDs that must complete before this job can start",
+      "default": [],
+      "examples": [["job-01H8X9A3A"]]
+    },
+    "retry_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of times this job has been retried",
+      "examples": [0]
+    },
+    "max_retries": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 10,
+      "description": "Maximum retry attempts before permanent failure",
+      "default": 3,
+      "examples": [3]
+    },
+    "error": {
+      "type": "string",
+      "nullable": true,
+      "description": "Human-readable error message (populated on failure)",
+      "examples": ["Backend pollinations returned HTTP 503"]
+    },
+    "error_code": {
+      "type": "string",
+      "nullable": true,
+      "description": "Machine-readable error code",
+      "examples": ["BACKEND_UNAVAILABLE"]
+    },
+    "retryable": {
+      "type": "boolean",
+      "description": "Whether the failed job can be retried",
+      "default": true
+    },
+    "timeout_seconds": {
+      "type": "integer",
+      "minimum": 10,
+      "maximum": 3600,
+      "description": "Maximum allowed execution time before the job is killed",
+      "default": 300,
+      "examples": [300]
+    },
+    "quality_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "nullable": true,
+      "description": "Quality score assigned on completion (if applicable)"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 creation timestamp",
+      "examples": ["2026-07-26T09:00:00Z"]
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 last update timestamp",
+      "examples": ["2026-07-26T09:00:15Z"]
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "nullable": true,
+      "description": "ISO 8601 timestamp when the worker started processing",
+      "examples": ["2026-07-26T09:00:10Z"]
+    },
+    "completed_at": {
+      "type": "string",
+      "format": "date-time",
+      "nullable": true,
+      "description": "ISO 8601 timestamp when the job finished (success or failure)",
+      "examples": ["2026-07-26T09:00:22Z"]
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "job_id": "job-01H8X9A3B",
+      "project_id": "proj-01H8X9A3B",
+      "job_type": "image_generation",
+      "state": "completed",
+      "priority": 5,
+      "payload": {
+        "scene_id": "scn-01H8X9A3B",
+        "shot_index": 0,
+        "prompt": "A medieval castle at sunset, cinematic lighting, 4K",
+        "negative_prompt": "blurry, low quality, watermark",
+        "width": 1024,
+        "height": 576,
+        "seed": 42
+      },
+      "result": {
+        "image_id": "img-01H8X9A3B",
+        "image_path": "/generated/images/img-01H8X9A3B.png",
+        "backend_used": "pollinations",
+        "duration_seconds": 12.4
+      },
+      "worker_id": "wk-01H8X9A3B",
+      "callback_url": "https://n8n.cineos.dev/webhook/render_callback",
+      "dependencies": [],
+      "retry_count": 0,
+      "max_retries": 3,
+      "error": null,
+      "error_code": null,
+      "retryable": true,
+      "timeout_seconds": 300,
+      "quality_score": 8.5,
+      "created_at": "2026-07-26T09:00:00Z",
+      "updated_at": "2026-07-26T09:00:22Z",
+      "started_at": "2026-07-26T09:00:10Z",
+      "completed_at": "2026-07-26T09:00:22Z"
+    }
+  ]
+}

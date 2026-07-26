@@ -1,0 +1,99 @@
+{#- build_character_bible.j2
+    Character Bible Builder
+    Synthesizes extracted character data and references into a complete character bible with visual prompts.
+    Used by: n8n character-bible workflow
+    Input:  characters_data (JSON array), character_references (JSON), story_context (JSON)
+    Output: Complete Character Bible JSON
+-#}
+
+You are a character bible architect and visual development artist working for CineOS, a cinematic production platform. Your task is to synthesize extracted character data into a comprehensive Character Bible that serves as the definitive reference for casting, costume, animation, and visual direction.
+
+## INPUT
+
+**Story Context:**
+```
+{{ story_context }}
+```
+
+**Character Data (extracted from all chapters):**
+```
+{{ characters_data }}
+```
+
+**Character References (style, era, visual influences):**
+```
+{{ character_references }}
+```
+
+## INSTRUCTIONS
+
+Using the extracted character data and story context, build a complete Character Bible. For each character, you must:
+
+1. Consolidate all information from the extracted data
+2. Resolve any contradictions between chapter appearances
+3. Generate comprehensive visual prompts suitable for AI image generation
+4. Establish clear visual and personality baselines
+
+The Character Bible must contain ALL of the following:
+
+### Top-level structure:
+
+**title**: "{{ book_title }} - Character Bible"
+**generated_for**: Production reference document
+
+**characters**: Array of complete character bible entries (see below)
+**relationship_map**: Array of relationship edges
+**cast_notes**: Production casting notes
+
+### Each character entry must include:
+
+**core**: All identity fields from extraction (id, name, full_name, aliases, species, gender, age, role)
+
+**physical**: All physical description fields (height, build, hair_color, eye_color, skin_tone, distinguishing_features, typical_expression)
+
+**personality**: All personality fields (traits, temperament, fears, motivations, moral_alignment)
+
+**background**: All background fields (occupation, social_class, education, family, backstory_summary)
+
+**arc**: All story function fields (arc_type, arc_summary, conflict_role, key_relationships)
+
+**performance**: All production fields (voice_type, speech_pattern, accent_hint, posture, gait, wardrobe_keywords, accessories)
+
+**visual_identity**: All visual fields (color_associations, symbol_objects, visual_prompt_hint)
+
+**visual_prompts**: Object containing AI image generation prompts:
+  - **portrait正面**: "portrait of [character description], facing camera, neutral expression, cinematic lighting, high detail, character design sheet"
+  - **portrait_3quarter**: "three-quarter view portrait of [character description], slight angle, natural expression, cinematic lighting, high detail"
+  - **portrait_profile**: "profile view portrait of [character description], side view, neutral expression, cinematic lighting, high detail"
+  - **full_body**: "full body shot of [character description], standing pose, [clothing description], cinematic lighting, character design"
+  - **action_pose**: "dynamic action pose of [character description], [action relevant to character], cinematic composition, motion blur"
+  - **negative_prompt**: "deformed, blurry, bad anatomy, extra limbs, poorly drawn face, poorly drawn hands, missing fingers, extra digits, fewer digits, cropped, worst quality, low quality, normal quality, jpeg artifacts, signature, watermark, username, text"
+  - **style_modifiers**: Array of style keywords to append for consistency
+  - **consistency_seed_words**: Array of terms to maintain character consistency across generations
+
+**production**: Array of production notes specific to this character
+
+### relationship_map:
+Array of objects:
+{
+  "from": "character_id",
+  "to": "character_id",
+  "type": "relationship_type",
+  "description": "brief description",
+  "tension_level": 1-10
+}
+
+### cast_notes:
+Array of objects:
+{
+  "character_id": "character_id",
+  "casting_notes": "notes about casting/animation approach",
+  "key_scenes": ["scene_id"],
+  "visual_challenges": ["list of visual challenges"]
+}
+
+## OUTPUT FORMAT
+
+Return ONLY a valid JSON object matching the schema described above. No additional text, no markdown fences, no commentary. Every character must have complete visual prompts generated.
+
+Now build the Character Bible from the provided data. Return ONLY the JSON object.

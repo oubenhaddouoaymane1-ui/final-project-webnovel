@@ -1,0 +1,491 @@
+{
+  "name": "007 - Character Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "character/engine",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-007",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "character-engine-007"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, p.language, c.id AS char_id, c.name, c.aliases, c.role, c.description, c.first_appearance FROM projects p JOIN characters c ON p.id = c.project_id WHERE p.id = $1 AND p.state = 'biblified'",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-chars-007",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-chars-007",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-007",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\nconst characters = rows.map(row => ({\n  id: row.char_id,\n  name: row.name,\n  aliases: row.aliases,\n  role: row.role,\n  description: row.description,\n  first_appearance: row.first_appearance\n}));\n\nreturn [{\n  json: {\n    project_id: projectId,\n    title: rows[0].title,\n    language: rows[0].language,\n    characters: characters,\n    total_characters: characters.length\n  }\n}];"
+      },
+      "id": "code-prepare-007",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": \"Build detailed character DNA profiles for these characters from '{{ $('Execute Logic').item.json.title }}':\\n\\n{{ JSON.stringify($('Execute Logic').item.json.characters.slice(0, 8)) }}\\n\\nFor each character, generate:\\n1. physical_appearance: {age, height, build, hair, eyes, distinguishing_features, typical_clothing}\\n2. personality: {traits, mbti_type, fears, desires, flaws, strengths}\\n3. backstory: {origin, key_events, motivations, secrets}\\n4. speech_pattern: {vocabulary_level, common_phrases, accent_notes, tone}\\n5. relationships: {allies, enemies, romantic_interests}\\n6. character_arc: {starting_state, midpoint转变, ending_state, growth_direction}\\n7. visual_prompt: detailed Stable Diffusion prompt for character portrait\\n\\nReturn as JSON array with character_name as key for each entry.\",\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-dna-007",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || '{}';\nlet dnaProfiles = [];\n\ntry {\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    dnaProfiles = Object.entries(parsed).map(([name, dna]) => ({\n      character_name: name,\n      dna: dna\n    }));\n  }\n} catch (e) {\n  dnaProfiles = [];\n}\n\nconst projectId = $('Execute Logic').item.json.project_id;\nconst characters = $('Execute Logic').item.json.characters;\n\n// Create visual prompt jobs\nconst imageJobs = dnaProfiles.filter(p => p.dna.visual_prompt).map(p => ({\n  json: {\n    project_id: projectId,\n    character_name: p.character_name,\n    prompt: p.dna.visual_prompt,\n    job_type: 'character_portrait',\n    status: 'pending',\n    created_at: new Date().toISOString()\n  }\n}));\n\nreturn [{\n  json: {\n    project_id: projectId,\n    dna_profiles: dnaProfiles,\n    image_jobs: imageJobs,\n    total_dna: dnaProfiles.length,\n    total_image_jobs: imageJobs.length\n  }\n}];"
+      },
+      "id": "code-process-dna-007",
+      "name": "Execute Logic (Scenes)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE characters SET dna = $2::jsonb, visual_prompt = $3, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.char_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify($json.dna) }}"
+              },
+              {
+                "value": "={{ $json.visual_prompt }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-dna-007",
+      "name": "Store Scenes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO image_generation_jobs (project_id, entity_type, entity_id, prompt, status, created_at) VALUES ($1, 'character', $2, $3, 'pending', NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ $json.character_name }}"
+              },
+              {
+                "value": "={{ $json.prompt }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-img-jobs-007",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE bibles SET locked = true, updated_at = NOW() WHERE project_id = $1 AND bible_type IN ('character', 'characters')",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-lock-007",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'characterized', updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-state-007",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2200, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'characters_characterized', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'characterized', characters_count: $('Execute Logic (Scenes)').item.json.total_dna, image_jobs_created: $('Execute Logic (Scenes)').item.json.total_image_jobs }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-007",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=👤 Character engine complete!\n\n📋 Project: {{ $('Execute Logic (Scenes)').item.json.project_id }}\n🧬 DNA profiles: {{ $('Execute Logic (Scenes)').item.json.total_dna }}\n🖼️ Image jobs: {{ $('Execute Logic (Scenes)').item.json.total_image_jobs }}\n🔒 Character bibles locked"
+      },
+      "id": "tg-007",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2640, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "worldbuilt"
+            },
+            {
+              "name": "current_state",
+              "value": "characterized"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-007",
+      "name": "Respond to Webhook (2)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'characterized', project_id: $('Execute Logic (Scenes)').item.json.project_id, dna_profiles: $('Execute Logic (Scenes)').item.json.total_dna, image_jobs: $('Execute Logic (Scenes)').item.json.total_image_jobs }) }}"
+      },
+      "id": "respond-007",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3080, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'Project not in biblified state' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-007",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Scenes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Scenes)": {
+      "main": [
+        [
+          {
+            "node": "Store Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Scenes": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook (2)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook (2)": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

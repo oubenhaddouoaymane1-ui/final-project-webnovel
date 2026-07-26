@@ -1,0 +1,11 @@
+# Default owners for everything
+* @cineos-team
+
+# Database changes require DBA review
+database/ @dba-team
+
+# Security changes require security review
+src/security/ @security-team
+
+# Workflow changes require platform review
+workflows/ @platform-team

@@ -1,0 +1,227 @@
+{
+  "name": "030 - Admin Tools",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "admin-tools",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || {};\nconst action = body.action;\nconst projectId = body.project_id;\nconst params = body.params || {};\n\nconst validActions = [\n  'pause', 'resume', 'retry', 'cancel', 'skip', 'force_complete',\n  'change_state', 'update_config', 'reset', 'reprocess', 'get_status',\n  'list_projects', 'force_delivery', 'run_review'\n];\n\nif (!action || !validActions.includes(action)) {\n  return [{ json: { error: `Invalid action. Valid actions: ${validActions.join(', ')}`, valid_actions: validActions } }];\n}\n\nif (!projectId && !['list_projects'].includes(action)) {\n  return [{ json: { error: 'project_id is required for this action' } }];\n}\n\nreturn [{\n  json: {\n    action: action,\n    project_id: projectId,\n    params: params,\n    admin_id: body.admin_id || 'unknown',\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "validate-action",
+      "name": "Validate Action",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-valid",
+              "leftValue": "={{ $json.error }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notExists"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "is-valid",
+      "name": "Valid Action?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: $json.error } }];"
+      },
+      "id": "return-error",
+      "name": "Return Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst action = input.action;\n\nconst actionMap = {\n  'pause': { query: \"UPDATE projects SET state = 'paused', updated_at = NOW() WHERE id = $1 RETURNING id, state\", needsProject: true },\n  'resume': { query: \"UPDATE projects SET state = 'resumed', updated_at = NOW() WHERE id = $1 AND state = 'paused' RETURNING id, state\", needsProject: true },\n  'retry': { query: \"UPDATE projects SET state = 'retrying', updated_at = NOW(), error_log = error_log || jsonb_build_object('retried_at', NOW()) WHERE id = $1 AND state IN ('failed', 'stuck') RETURNING id, state\", needsProject: true },\n  'cancel': { query: \"UPDATE projects SET state = 'cancelled', updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'cancelled', 'at', NOW()) WHERE id = $1 RETURNING id, state\", needsProject: true },\n  'skip': { query: \"UPDATE projects SET state = 'skipped', updated_at = NOW() WHERE id = $1 RETURNING id, state\", needsProject: true },\n  'force_complete': { query: \"UPDATE projects SET state = 'completed', updated_at = NOW() WHERE id = $1 RETURNING id, state\", needsProject: true },\n  'change_state': { query: `UPDATE projects SET state = '${input.params.new_state || 'pending'}', updated_at = NOW() WHERE id = $1 RETURNING id, state`, needsProject: true },\n  'reset': { query: \"UPDATE projects SET state = 'pending', updated_at = NOW(), error_log = '{}'::jsonb WHERE id = $1 RETURNING id, state\", needsProject: true },\n  'get_status': { query: \"SELECT id, title, state, overall_score, updated_at FROM projects WHERE id = $1\", needsProject: true },\n  'list_projects': { query: \"SELECT id, title, state, overall_score, updated_at FROM projects ORDER BY updated_at DESC LIMIT 20\", needsProject: false },\n  'force_delivery': { query: \"UPDATE projects SET state = 'approved', updated_at = NOW() WHERE id = $1 AND state = 'delivered' RETURNING id, state\", needsProject: true },\n  'run_review': { query: \"UPDATE projects SET state = 'final_review', updated_at = NOW() WHERE id = $1 AND state IN ('rendered', 'animated') RETURNING id, state\", needsProject: true }\n};\n\nconst actionConfig = actionMap[action];\n\nreturn [{\n  json: {\n    ...input,\n    query: actionConfig.query,\n    params: actionConfig.needsProject ? [input.project_id] : []\n  }\n}];"
+      },
+      "id": "route-action",
+      "name": "Route to Handler",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "={{ $json.query }}",
+        "additionalFields": {}
+      },
+      "id": "execute-action",
+      "name": "Execute Action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1080, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO admin_actions (admin_id, action_type, project_id, params, result, executed_at) VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "log-action",
+      "name": "Log Action",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.ADMIN_CHAT_ID }}",
+        "text": "🔧 Admin Action Executed\n\nAction: {{ $('Validate Action').first().json.action }}\nProject: {{ $('Validate Action').first().json.project_id || 'N/A' }}\nAdmin: {{ $('Validate Action').first().json.admin_id }}\nResult: {{ $json.rows.length > 0 ? 'Success' : 'No rows affected' }}\n\nTimestamp: {{ new Date().toISOString() }}",
+        "additionalFields": {}
+      },
+      "id": "notify-admin",
+      "name": "Notify Admin",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1520, 240],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"action\": $('Validate Action').first().json.action, \"project_id\": $('Validate Action').first().json.project_id, \"result\": $json.rows } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1740, 240]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Validate Action", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate Action": {
+      "main": [
+        [
+          { "node": "Valid Action?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Valid Action?": {
+      "main": [
+        [
+          { "node": "Route to Handler", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Return Error", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Return Error": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Route to Handler": {
+      "main": [
+        [
+          { "node": "Execute Action", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Execute Action": {
+      "main": [
+        [
+          { "node": "Log Action", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Log Action": {
+      "main": [
+        [
+          { "node": "Notify Admin", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Notify Admin": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "admin" },
+    { "name": "tools" }
+  ]
+}

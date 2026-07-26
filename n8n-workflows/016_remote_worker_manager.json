@@ -1,0 +1,318 @@
+{
+  "name": "016 - Remote Worker Manager",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "cron-016",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.cron",
+      "typeVersion": 1.1,
+      "position": [220, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT w.id AS worker_id, w.worker_name, w.worker_type, w.status, w.last_heartbeat, w.pending_jobs, w.completed_jobs, w.failed_jobs, EXTRACT(EPOCH FROM (NOW() - w.last_heartbeat)) AS seconds_since_heartbeat FROM workers w WHERE w.status != 'offline' ORDER BY w.last_heartbeat DESC",
+        "additionalFields": {}
+      },
+      "id": "pg-load-workers-016",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-workers-016",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-016",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst STALE_THRESHOLD = 90; // seconds\n\nconst staleWorkers = [];\nconst healthyWorkers = [];\n\nfor (const row of rows) {\n  if (row.seconds_since_heartbeat > STALE_THRESHOLD) {\n    staleWorkers.push({\n      worker_id: row.worker_id,\n      worker_name: row.worker_name,\n      worker_type: row.worker_type,\n      last_heartbeat: row.last_heartbeat,\n      pending_jobs: row.pending_jobs || 0\n    });\n  } else {\n    healthyWorkers.push({\n      worker_id: row.worker_id,\n      worker_name: row.worker_name,\n      worker_type: row.worker_type,\n      pending_jobs: row.pending_jobs || 0,\n      completed_jobs: row.completed_jobs || 0,\n      failed_jobs: row.failed_jobs || 0\n    });\n  }\n}\n\nreturn [{\n  json: {\n    stale_workers: staleWorkers,\n    healthy_workers: healthyWorkers,\n    stale_count: staleWorkers.length,\n    healthy_count: healthyWorkers.length,\n    total_workers: rows.length\n  }\n}];"
+      },
+      "id": "code-analyze-016",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE workers SET status = 'offline', updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.worker_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-mark-offline-016",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jobs SET state = 'pending', worker_id = NULL, updated_at = NOW() WHERE worker_id = $1 AND state IN ('assigned', 'processing')",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.worker_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-reassign-jobs-016",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1320, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES (NULL, 'worker_health_check', $1::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ JSON.stringify({ stale_count: $('Execute Logic').item.json.stale_count, healthy_count: $('Execute Logic').item.json.healthy_count, total_workers: $('Execute Logic').item.json.total_workers, timestamp: new Date().toISOString() }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-016",
+      "name": "Store Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "health_check"
+            },
+            {
+              "name": "next_state",
+              "value": "workers_rebalanced"
+            },
+            {
+              "name": "current_state",
+              "value": "monitoring"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-016",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1760, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'health_check_complete', stale_workers: $('Execute Logic').item.json.stale_count, healthy_workers: $('Execute Logic').item.json.healthy_count, total_workers: $('Execute Logic').item.json.total_workers }) }}"
+      },
+      "id": "respond-016",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1980, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'no_workers', message: 'No active workers found' }) }}"
+      },
+      "id": "respond-no-workers-016",
+      "name": "Respond (No Workers)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (No Workers)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Store Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Events": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

@@ -1,0 +1,439 @@
+{
+  "name": "008 - World Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "world/engine",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-008",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "world-engine-008"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, p.language, l.id AS loc_id, l.name, l.type, l.description, l.significance FROM projects p JOIN locations l ON p.id = l.project_id WHERE p.id = $1 AND p.state = 'characterized'",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-locs-008",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-locs-008",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-008",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\nconst locations = rows.map(row => ({\n  id: row.loc_id,\n  name: row.name,\n  type: row.type,\n  description: row.description,\n  significance: row.significance\n}));\n\nreturn [{\n  json: {\n    project_id: projectId,\n    title: rows[0].title,\n    language: rows[0].language,\n    locations: locations,\n    total_locations: locations.length\n  }\n}];"
+      },
+      "id": "code-prepare-008",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": \"Build a comprehensive World Bible for '{{ $('Execute Logic').item.json.title }}'.\\n\\nLocations: {{ JSON.stringify($('Execute Logic').item.json.locations.slice(0, 15)) }}\\n\\nFor the World Bible, generate:\\n1. world_overview: {name, era, geography, climate, technology_level, magic_system if applicable}\\n2. location_cards: for each location include {name, detailed_description, atmosphere, sensory_details, notable_features, associated_characters, time_of_day_appearance, visual_style_notes}\\n3. world_rules: {physical_laws, societal_norms, political_structure, economy}\\n4. visual_references: for each location, a Stable Diffusion prompt for environmental art\\n\\nReturn as JSON with keys: world_overview, location_cards, world_rules, visual_references.\",\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-world-008",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || '{}';\nlet worldBible = {};\n\ntry {\n  const jsonMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    worldBible = JSON.parse(jsonMatch[0]);\n  }\n} catch (e) {\n  worldBible = { error: 'Parse failed' };\n}\n\nconst projectId = $('Execute Logic').item.json.project_id;\n\n// Create image jobs for location cards\nconst imageJobs = [];\nconst visualRefs = worldBible.visual_references || {};\n\nObject.entries(visualRefs).forEach(([locName, prompt]) => {\n  imageJobs.push({\n    json: {\n      project_id: projectId,\n      location_name: locName,\n      prompt: prompt,\n      job_type: 'location_art',\n      status: 'pending',\n      created_at: new Date().toISOString()\n    }\n  });\n});\n\nreturn [{\n  json: {\n    project_id: projectId,\n    world_bible: worldBible,\n    image_jobs: imageJobs,\n    total_image_jobs: imageJobs.length\n  }\n}];"
+      },
+      "id": "code-process-world-008",
+      "name": "Execute Logic (Scenes)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO bibles (project_id, bible_type, content, locked, created_at, updated_at) VALUES ($1, 'world', $2::jsonb, true, NOW(), NOW()) ON CONFLICT (project_id, bible_type) DO UPDATE SET content = $2::jsonb, locked = true, updated_at = NOW()",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify($json.world_bible) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-world-008",
+      "name": "Store Scenes",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO image_generation_jobs (project_id, entity_type, entity_name, prompt, status, created_at) VALUES ($1, 'location', $2, $3, 'pending', NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ $json.location_name }}"
+              },
+              {
+                "value": "={{ $json.prompt }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-img-jobs-008",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'worldbuilt', updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-state-008",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'world_built', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'worldbuilt', image_jobs_created: $('Execute Logic (Scenes)').item.json.total_image_jobs, bible_locked: true }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-008",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2200, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=🌍 World engine complete!\n\n📋 Project: {{ $('Execute Logic (Scenes)').item.json.project_id }}\n🗺️ World bible built and locked\n🖼️ Location art jobs: {{ $('Execute Logic (Scenes)').item.json.total_image_jobs }}\n🔒 World bible locked"
+      },
+      "id": "tg-008",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2420, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Scenes)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "timeline_verified"
+            },
+            {
+              "name": "current_state",
+              "value": "worldbuilt"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-008",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'worldbuilt', project_id: $('Execute Logic (Scenes)').item.json.project_id, image_jobs: $('Execute Logic (Scenes)').item.json.total_image_jobs, bible_locked: true }) }}"
+      },
+      "id": "respond-008",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'Project not in characterized state' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-008",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Scenes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Scenes)": {
+      "main": [
+        [
+          {
+            "node": "Store Scenes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Scenes": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

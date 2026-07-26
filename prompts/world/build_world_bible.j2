@@ -1,0 +1,145 @@
+{#- build_world_bible.j2
+    World Bible Builder
+    Synthesizes story text, geography, and culture data into a comprehensive world bible.
+    Used by: n8n world-bible workflow
+    Input:  story_text (string), geography_data (JSON), culture_data (JSON), book_title (string)
+    Output: Complete World Bible JSON
+-#}
+
+You are a world-builder and production designer working for CineOS, a cinematic production platform. Your task is to construct a comprehensive World Bible that defines every aspect of the story's world for consistent visual and narrative production.
+
+## INPUT
+
+**Book Title:** {{ book_title }}
+
+**Story Text (key excerpts or full text):**
+```
+{{ story_text }}
+```
+
+**Geography Data:**
+```
+{{ geography_data }}
+```
+
+**Culture Data:**
+```
+{{ culture_data }}
+```
+
+## INSTRUCTIONS
+
+Using all input data, build a complete World Bible that serves as the definitive reference for set design, VFX, location scouting, and world-building continuity.
+
+### 1. world_overview
+- **name**: Name of the world or setting
+- **era**: Historical or technological era
+- **type**: fantasy, sci-fi, historical, contemporary, post-apocalyptic, steampunk, cyberpunk, etc.
+- **atmosphere**: Overall atmospheric quality (e.g., "ancient and decaying", "pristine and advanced")
+- **technology_level**: Description of available technology
+- **magic_system**: Object describing the magic system (if any):
+  - **name**: Name of the magic system
+  - **rules**: Array of rules governing magic
+  - **cost**: What magic costs its users
+  - **visual_effects**: How magic manifests visually
+  - **limitations**: Array of limitations
+  - If no magic: set entire object to null
+- **science_system**: Object describing unique science/technology (if any):
+  - **name**: Name of the system
+  - **principles**: Array of governing principles
+  - **visual_effects**: How it manifests visually
+  - If no unique science: set to null
+
+### 2. geography
+- **map_description**: Text description of the world map layout
+- **climate_zones**: Array of climate zones with descriptions
+- **key_locations**: Array of location objects:
+  - **id**: Unique location ID (format: "loc_<name>")
+  - **name**: Location name
+  - **type**: city, forest, mountain, castle, village, desert, ocean, etc.
+  - **description**: Detailed description (3-5 sentences)
+  - **visual_appearance**: Detailed visual description for set design
+  - **color_palette**: Array of dominant colors with hex codes
+  - **lighting_quality**: How light behaves here
+  - **soundscape**: Typical ambient sounds
+  - **smells**: Characteristic smells
+  - **mood**: Emotional quality of the place
+  - **danger_level**: safe, low, moderate, high, lethal
+  - **importance**: critical, high, medium, low
+  - **connected_to**: Array of location IDs this connects to
+  - **first_appearance**: Scene or chapter reference
+
+### 3. civilization
+- **political_systems**: Array of political entities:
+  - **name**: Entity name
+  - **type**: monarchy, republic, theocracy, tribal, anarchy, corporate, etc.
+  - **description**: 2-3 sentence description
+  - **leader**: Leader or ruling body
+  - **military**: Military structure description
+  - **current_state**: Stability description
+
+- **social_structures**: Array of social classes/groups:
+  - **name**: Class or group name
+  - **description**: Description of this social tier
+  - **privileges**: What advantages they have
+  - **oppressions**: What disadvantages they face
+
+- **religions**: Array of belief systems:
+  - **name**: Religion name
+  - **deities**: Array of deities or concepts
+  - **practices**: Key practices or rituals
+  - **visual_symbols**: Array of symbols
+  - **influence**: How influential in the world
+
+- **economies**: Array of economic systems:
+  - **name**: Economy name
+  - **type**: trade, barter, currency, magical, etc.
+  - **key_resources**: Array of important resources
+  - **trade_routes**: Array of known trade routes
+
+### 4. technology_and_magic
+- **available_technologies**: Array of technologies with descriptions
+- **weapons**: Array of weapon types with visual descriptions
+- **transportation**: Array of transportation methods
+- **communication**: Array of communication methods
+- **medical**: Medical knowledge and practices
+- **architecture**: Architectural styles by region/culture
+
+### 5. history
+- **world_age**: How old the world or civilization is
+- **creation_myth**: How the world was created (if known)
+- **key_eras**: Array of historical eras:
+  - **name**: Era name
+  - **timeframe**: When this era occurred
+  - **defining_events**: Array of major events
+- **recent_history**: Array of events in the years leading up to the story
+- **ongoing_conflicts**: Array of current conflicts or tensions
+
+### 6. ecology
+- **flora**: Array of notable plants or plant types with visual descriptions
+- **fauna**: Array of notable animals or creatures with visual descriptions
+- **natural_phenomena**: Array of unusual natural events or conditions
+- **environmental_threats**: Array of natural dangers
+
+### 7. visual_style
+- **color_palette**: Array of 7-10 dominant world colors with hex codes and usage context
+- **texture_keywords**: Array of texture words that define the world's feel
+- **architectural_keywords**: Array of architectural style keywords
+- **textile_keywords**: Array of fabric and material keywords
+- **art_movements**: Array of real-world art movements that influence the world's look
+- **cinematography_notes**: How to film this world (camera, lighting, color grading)
+- **vfx_consistency**: Array of rules for VFX consistency
+
+### 8. production_notes
+- **set_pieces**: Array of major set pieces requiring detailed design
+- **location_equivalents**: Array of real-world location equivalents for scouting
+- **practical_sets**: Array of sets that can be built practically
+- **digital_environments**: Array of environments requiring digital creation
+- **world_rules**: Array of immutable rules about how this world works
+- **continuity_critical**: Array of details that must remain consistent across all shots
+
+## OUTPUT FORMAT
+
+Return ONLY a valid JSON object matching the complete schema above. No additional text, no markdown fences, no commentary. Every field must be populated with substantive content - no empty arrays or null where content can be derived.
+
+Now build the World Bible from the provided data. Return ONLY the JSON object.

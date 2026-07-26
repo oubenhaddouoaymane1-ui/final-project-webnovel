@@ -1,0 +1,161 @@
+version: "3.9"
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: cineos-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--storage.tsdb.retention.time=30d"
+      - "--web.console.libraries=/etc/prometheus/console_libraries"
+      - "--web.console.templates=/etc/prometheus/consoles"
+      - "--web.enable-lifecycle"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - cineos-network
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: cineos-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-cineos_grafana}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SERVER_ROOT_URL: http://localhost:3000
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - ./grafana/datasources:/etc/grafana/provisioning/datasources:ro
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - cineos-network
+
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: cineos-node-exporter
+    restart: unless-stopped
+    ports:
+      - "9100:9100"
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - "--path.procfs=/host/proc"
+      - "--path.sysfs=/host/sys"
+      - "--path.rootfs=/rootfs"
+      - "--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:9100/metrics"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+    networks:
+      - cineos-network
+
+  healthcheck-dashboard:
+    image: python:3.11-slim
+    container_name: cineos-health-dashboard
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      DASHBOARD_PORT: 8080
+      SERVICES: postgres:5432,n8n:5678,redis:6379
+    volumes:
+      - ./health_dashboard.py:/app/health_dashboard.py:ro
+    working_dir: /app
+    command: >
+      python -c "
+      import http.server, json, urllib.request, socketserver, os, time, threading
+
+      SERVICES = os.environ.get('SERVICES', '').split(',')
+      PORT = int(os.environ.get('DASHBOARD_PORT', '8080'))
+
+      class HealthHandler(http.server.BaseHTTPRequestHandler):
+          def do_GET(self):
+              if self.path == '/':
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'text/html')
+                  self.end_headers()
+                  self.wfile.write(self.build_html().encode())
+              elif self.path == '/api/health':
+                  self.send_response(200)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(json.dumps(self.check_all()).encode())
+              else:
+                  self.send_response(404)
+                  self.end_headers()
+
+          def check_all(self):
+              results = {}
+              for svc in SERVICES:
+                  host, port = svc.split(':')
+                  try:
+                      sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                      sock.settimeout(3)
+                      result = sock.connect_ex((host, int(port)))
+                      sock.close()
+                      results[host] = {'status': 'healthy' if result == 0 else 'unhealthy', 'port': int(port)}
+                  except Exception as e:
+                      results[host] = {'status': 'error', 'error': str(e)}
+              return {'services': results, 'timestamp': time.time()}
+
+          def build_html(self):
+              data = self.check_all()
+              rows = ''
+              for name, info in data['services'].items():
+                  color = '#4caf50' if info['status'] == 'healthy' else '#f44336'
+                  rows += f'<tr><td>{name}</td><td style=\"color:{color}\">{info[\"status\"]}</td><td>{info.get(\"port\",\"N/A\")}</td></tr>'
+              return f'''<!DOCTYPE html><html><head><title>CineOS Health</title><meta http-equiv=\"refresh\" content=\"15\"><style>body{{font-family:sans-serif;margin:40px;background:#1a1a2e;color:#eee}}table{{border-collapse:collapse;width:100%}}th,td{{padding:12px;border:1px solid #333;text-align:left}}th{{background:#16213e}}tr:nth-child(even){{background:#1a1a2e}}tr:nth-child(odd){{background:#0f3460}}</style></head><body><h1>CineOS Service Health</h1><p>Auto-refreshes every 15s</p><table><tr><th>Service</th><th>Status</th><th>Port</th></tr>{rows}</table></body></html>'''
+
+          def log_message(self, format, *args): pass
+
+      socketserver.TCPServer.allow_reuse_address = True
+      with socketserver.TCPServer(('0.0.0.0', PORT), HealthHandler) as httpd:
+          print(f'Health dashboard on port {PORT}')
+          httpd.serve_forever()
+      "
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    networks:
+      - cineos-network
+
+volumes:
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  cineos-network:
+    external: true

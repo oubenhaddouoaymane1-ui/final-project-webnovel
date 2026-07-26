@@ -1,0 +1,1 @@
+"""Video assembly module"""

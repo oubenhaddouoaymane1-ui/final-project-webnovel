@@ -1,0 +1,410 @@
+{
+  "name": "022 - Animation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "animation-engine",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id as project_id, p.title, sh.id as shot_id, sh.shot_number, sh.description, sh.duration_seconds, sh.camera_movement, i.url as image_url, i.prompt as image_prompt, a.url as audio_url, a.transcript FROM projects p JOIN shots sh ON sh.project_id = p.id LEFT JOIN images i ON i.shot_id = sh.id LEFT JOIN audio a ON a.shot_id = sh.id WHERE p.id = $1 AND p.state = 'scored' ORDER BY sh.shot_number",
+        "additionalFields": {}
+      },
+      "id": "load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-shots",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-state",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\nconst shotPlans = rows.map(row => {\n  let animationType, effectParams;\n  \n  const movement = (row.camera_movement || 'static').toLowerCase();\n  \n  switch (movement) {\n    case 'pan_left':\n      animationType = 'pan';\n      effectParams = { direction: 'left', speed: 'medium', easing: 'ease-in-out' };\n      break;\n    case 'pan_right':\n      animationType = 'pan';\n      effectParams = { direction: 'right', speed: 'medium', easing: 'ease-in-out' };\n      break;\n    case 'zoom_in':\n      animationType = 'zoom';\n      effectParams = { direction: 'in', start_scale: 1.0, end_scale: 1.3, easing: 'ease-out' };\n      break;\n    case 'zoom_out':\n      animationType = 'zoom';\n      effectParams = { direction: 'out', start_scale: 1.3, end_scale: 1.0, easing: 'ease-in' };\n      break;\n    case 'tilt_up':\n      animationType = 'tilt';\n      effectParams = { direction: 'up', speed: 'slow', easing: 'ease-in-out' };\n      break;\n    case 'tilt_down':\n      animationType = 'tilt';\n      effectParams = { direction: 'down', speed: 'slow', easing: 'ease-in-out' };\n      break;\n    case 'dolly':\n      animationType = 'parallax';\n      effectParams = { depth_layers: 3, movement: 'forward', speed: 'slow' };\n      break;\n    case 'tracking':\n      animationType = 'motion_path';\n      effectParams = { follow_subject: true, smooth: true };\n      break;\n    default:\n      animationType = 'ken_burns';\n      effectParams = { style: 'gentle_zoom', duration: row.duration_seconds };\n  }\n  \n  return {\n    shot_id: row.shot_id,\n    shot_number: row.shot_number,\n    duration: row.duration_seconds,\n    animation_type: animationType,\n    effect_params: effectParams,\n    fps: 24,\n    resolution: '1920x1080'\n  };\n});\n\nreturn [{ json: { project_id: projectId, shot_plans: shotPlans, total_shots: shotPlans.length } }];"
+      },
+      "id": "plan-animation",
+      "name": "Plan Animation Types",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst projectId = input.project_id;\nconst shotPlans = input.shot_plans;\n\nconst renderJobs = shotPlans.map(plan => ({\n  project_id: projectId,\n  shot_id: plan.shot_id,\n  shot_number: plan.shot_number,\n  animation_type: plan.animation_type,\n  effect_params: JSON.stringify(plan.effect_params),\n  fps: plan.fps,\n  resolution: plan.resolution,\n  duration: plan.duration\n}));\n\nreturn [{ json: { project_id: projectId, render_jobs: renderJobs, total_jobs: renderJobs.length } }];"
+      },
+      "id": "prepare-render-jobs",
+      "name": "Prepare Render Jobs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/animation/render-batch",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "jobs",
+              "value": "={{ JSON.stringify($json.render_jobs) }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "dispatch-workers",
+      "name": "Dispatch to Workers",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1300, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COUNT(*) as total, COUNT(CASE WHEN status = 'completed' THEN 1 END) as completed, COUNT(CASE WHEN status = 'failed' THEN 1 END) as failed FROM animation_clips WHERE project_id = $1",
+        "additionalFields": {}
+      },
+      "id": "validate-clips",
+      "name": "Validate All Clips",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1520, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-clip-validation",
+              "leftValue": "={{ $json.rows[0].failed }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-all-valid",
+      "name": "All Clips Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1740, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'animated', updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'animated', 'at', NOW(), 'details', 'All animation clips rendered') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-state",
+      "name": "Transition to Animated",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1960, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_events (project_id, event_type, payload, created_at) VALUES ($1, 'animation_completed', jsonb_build_object('total_shots', $2, 'failed_shots', $3), NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2180, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "🎬 Animation Engine Complete\n\nProject: {{ $json.project_id }}\nTotal shots: {{ $json.total_shots }}\nFailed shots: {{ $json.failed_shots }}\n\nState: animated",
+        "additionalFields": {}
+      },
+      "id": "send-progress",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2400, 180],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_URL }}/trigger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "animated"
+            },
+            {
+              "name": "triggered_by",
+              "value": "animation_engine"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 180]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"animation_engine\", \"project_id\": $json.project_id, \"state\": \"animated\" } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2840, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: 'No shots found or project not in correct state', project_id: $('Webhook Trigger').first().json.body?.project_id } }];"
+      },
+      "id": "handle-no-data",
+      "name": "Handle No Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'animation_failed', updated_at = NOW(), error_log = error_log || jsonb_build_object('error', 'Some clips failed', 'at', NOW()) WHERE id = $1 RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "mark-failed",
+      "name": "Mark Animation Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1960, 360],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Load Project", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          { "node": "Validate State", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          { "node": "Plan Animation Types", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle No Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Plan Animation Types": {
+      "main": [
+        [
+          { "node": "Prepare Render Jobs", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Prepare Render Jobs": {
+      "main": [
+        [
+          { "node": "Dispatch to Workers", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Dispatch to Workers": {
+      "main": [
+        [
+          { "node": "Validate All Clips", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate All Clips": {
+      "main": [
+        [
+          { "node": "All Clips Valid?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "All Clips Valid?": {
+      "main": [
+        [
+          { "node": "Transition to Animated", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Mark Animation Failed", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Animated": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          { "node": "Send Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          { "node": "Trigger Orchestrator", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle No Data": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Mark Animation Failed": {
+      "main": [
+        [
+          { "node": "Send Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "animation" },
+    { "name": "production" }
+  ]
+}

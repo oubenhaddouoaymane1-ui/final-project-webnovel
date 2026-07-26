@@ -1,0 +1,432 @@
+{
+  "name": "023 - Render Manager",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "render-manager",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id as project_id, p.title, p.resolution, p.target_fps, ac.id as clip_id, ac.clip_url, ac.duration_seconds, ac.animation_type, sh.shot_number, sh.sequence_order FROM projects p JOIN animation_clips ac ON ac.project_id = p.id JOIN shots sh ON sh.id = ac.shot_id WHERE p.id = $1 AND p.state = 'animated' ORDER BY sh.sequence_order",
+        "additionalFields": {}
+      },
+      "id": "load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-clips",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-state",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\nconst resolution = rows[0].resolution || '1920x1080';\nconst fps = rows[0].target_fps || 24;\n\nconst sortedClips = rows.sort((a, b) => a.shot_number - b.shot_number);\n\nconst concatList = sortedClips.map((clip, idx) => `file '${clip.clip_url}'`).join('\\n');\n\nconst ffmpegCommand = [\n  'ffmpeg',\n  '-y',\n  '-f', 'concat',\n  '-safe', '0',\n  '-i', '/tmp/concat_list.txt',\n  '-c:v', 'libx264',\n  '-preset', 'slow',\n  '-crf', '18',\n  '-r', fps.toString(),\n  '-s', resolution,\n  '-pix_fmt', 'yuv420p',\n  '-c:a', 'aac',\n  '-b:a', '192k',\n  '-movflags', '+faststart',\n  `/tmp/output_${projectId}.mp4`\n].join(' ');\n\nreturn [{\n  json: {\n    project_id: projectId,\n    resolution: resolution,\n    fps: fps,\n    total_clips: sortedClips.length,\n    total_duration: sortedClips.reduce((sum, c) => sum + c.duration_seconds, 0),\n    concat_list: concatList,\n    ffmpeg_command: ffmpegCommand,\n    clips: sortedClips.map(c => ({\n      clip_id: c.clip_id,\n      clip_url: c.clip_url,\n      shot_number: c.shot_number,\n      duration: c.duration_seconds\n    }))\n  }\n}];"
+      },
+      "id": "build-ffmpeg-command",
+      "name": "Build FFmpeg Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/render/dispatch",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "ffmpeg_command",
+              "value": "={{ $json.ffmpeg_command }}"
+            },
+            {
+              "name": "concat_list",
+              "value": "={{ $json.concat_list }}"
+            },
+            {
+              "name": "total_clips",
+              "value": "={{ $json.total_clips }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "dispatch-render",
+      "name": "Dispatch Render Job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE render_jobs SET status = 'processing', started_at = NOW() WHERE project_id = $1 AND status = 'pending' RETURNING id, status",
+        "additionalFields": {}
+      },
+      "id": "track-render-job",
+      "name": "Track Render Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.WORKER_URL }}/render/status/{{ $('Dispatch Render Job').first().json.job_id }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "monitor-progress",
+      "name": "Monitor Render Progress",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-complete",
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "completed",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-render-status",
+      "name": "Render Complete?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1740, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'rendered', final_video_url = $2, final_video_duration = $3, updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'rendered', 'at', NOW(), 'details', 'Video rendered successfully') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "store-final-video",
+      "name": "Store Final Video",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1960, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_events (project_id, event_type, payload, created_at) VALUES ($1, 'render_completed', jsonb_build_object('video_url', $2, 'duration', $3, 'resolution', $4, 'total_clips', $5), NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2180, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "🎥 Render Manager Complete\n\nProject: {{ $json.project_id }}\nResolution: {{ $json.resolution }}\nDuration: {{ $json.duration }}s\nClips assembled: {{ $json.total_clips }}\n\nState: rendered",
+        "additionalFields": {}
+      },
+      "id": "send-progress",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2400, 180],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_URL }}/trigger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "rendered"
+            },
+            {
+              "name": "triggered_by",
+              "value": "render_manager"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2620, 180]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"render_manager\", \"project_id\": $json.project_id, \"state\": \"rendered\" } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2840, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: 'No clips found or project not in animated state', project_id: $('Webhook Trigger').first().json.body?.project_id } }];"
+      },
+      "id": "handle-no-data",
+      "name": "Handle No Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { ...$input.first().json, poll_count: ($input.first().json.poll_count || 0) + 1 } }];"
+      },
+      "id": "increment-poll",
+      "name": "Increment Poll",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1740, 360]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE render_jobs SET status = 'failed', error_message = 'Render timeout', completed_at = NOW() WHERE project_id = $1 AND status = 'processing' RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "handle-render-timeout",
+      "name": "Handle Render Timeout",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1960, 360],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Load Project", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          { "node": "Validate State", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          { "node": "Build FFmpeg Command", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle No Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build FFmpeg Command": {
+      "main": [
+        [
+          { "node": "Dispatch Render Job", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Dispatch Render Job": {
+      "main": [
+        [
+          { "node": "Track Render Job", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Track Render Job": {
+      "main": [
+        [
+          { "node": "Monitor Render Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Monitor Render Progress": {
+      "main": [
+        [
+          { "node": "Render Complete?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Render Complete?": {
+      "main": [
+        [
+          { "node": "Store Final Video", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Increment Poll", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Store Final Video": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          { "node": "Send Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          { "node": "Trigger Orchestrator", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle No Data": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Increment Poll": {
+      "main": [
+        [
+          { "node": "Monitor Render Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "render" },
+    { "name": "production" }
+  ]
+}

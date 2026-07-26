@@ -1,0 +1,236 @@
+##############################################################################
+# CineOS — Cinematic Production Platform
+# Lightweight controller — all heavy AI runs on free cloud services
+##############################################################################
+services:
+
+  # ── PostgreSQL ────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: cineos-postgres
+    restart: unless-stopped
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-cineos}
+      POSTGRES_USER: ${POSTGRES_USER:-cineos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/indexes.sql:/docker-entrypoint-initdb.d/02-indexes.sql:ro
+      - ./database/constraints.sql:/docker-entrypoint-initdb.d/03-constraints.sql:ro
+      - ./database/functions.sql:/docker-entrypoint-initdb.d/04-functions.sql:ro
+      - ./database/triggers.sql:/docker-entrypoint-initdb.d/05-triggers.sql:ro
+      - ./database/views.sql:/docker-entrypoint-initdb.d/06-views.sql:ro
+      - ./database/seed/config_defaults.sql:/docker-entrypoint-initdb.d/07-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-cineos} -d ${POSTGRES_DB:-cineos}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    networks:
+      - cineos-network
+
+  # ── Redis ─────────────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: cineos-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cineos-network
+
+  # ── n8n Workflow Automation ───────────────────────────────────────────────
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: cineos-n8n
+    restart: unless-stopped
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: ${POSTGRES_HOST:-postgres}
+      DB_POSTGRESDB_PORT: ${POSTGRES_PORT:-5432}
+      DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-cineos}
+      DB_POSTGRESDB_USER: ${POSTGRES_USER:-cineos}
+      DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      N8N_HOST: ${N8N_HOST:-0.0.0.0}
+      N8N_PORT: 5678
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-changeme_random_32_chars}
+      N8N_BASIC_AUTH_ACTIVE: ${N8N_BASIC_AUTH_ACTIVE:-true}
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-cineos}
+      POSTGRES_USER: ${POSTGRES_USER:-cineos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-en}
+      QUALITY_THRESHOLD: ${QUALITY_THRESHOLD:-0.80}
+      MAX_RETRY: ${MAX_RETRY:-3}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      HF_API_KEY: ${HF_API_KEY:-}
+      POLLINATIONS_ENABLED: "true"
+      COLAB_COMFYUI_ENDPOINT: ${COLAB_COMFYUI_ENDPOINT:-}
+      COLAB_API_KEY: ${COLAB_API_KEY:-}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./workflows:/workflows:ro
+      - ./generated:/home/node/cineos/generated
+      - ./logs:/home/node/cineos/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cineos-network
+
+  # ── Supervisor / Coordinator ──────────────────────────────────────────────
+  supervisor:
+    build:
+      context: ./workers
+      dockerfile: Dockerfile
+    container_name: cineos-supervisor
+    command: python -m workers.supervisor.service
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      SERVICE_NAME: supervisor
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-cineos}
+      POSTGRES_USER: ${POSTGRES_USER:-cineos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      MAX_PARALLEL_JOBS: ${MAX_PARALLEL_JOBS:-4}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cineos-network
+
+  # ── Render / FFmpeg Worker (local, lightweight) ───────────────────────────
+  render_worker:
+    build:
+      context: ./docker/ffmpeg
+      dockerfile: Dockerfile
+    container_name: cineos-render-worker
+    restart: unless-stopped
+    ports:
+      - "8300:8300"
+    environment:
+      SERVICE_NAME: render_worker
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-cineos}
+      POSTGRES_USER: ${POSTGRES_USER:-cineos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./output:/data/output
+      - ./generated:/data/generated
+    depends_on:
+      supervisor:
+        condition: service_started
+    networks:
+      - cineos-network
+
+  # ── Voice / TTS Worker (local, Edge-TTS — free cloud API) ─────────────────
+  voice_worker:
+    build:
+      context: ./docker/voice
+      dockerfile: Dockerfile
+    container_name: cineos-voice-worker
+    restart: unless-stopped
+    ports:
+      - "8400:8400"
+    environment:
+      SERVICE_NAME: voice_worker
+      WORKER_PORT: 8400
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-cineos}
+      POSTGRES_USER: ${POSTGRES_USER:-cineos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./cache/voice:/data/cache
+    depends_on:
+      supervisor:
+        condition: service_started
+    networks:
+      - cineos-network
+
+  # ── Telegram Bot ──────────────────────────────────────────────────────────
+  telegram_bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cineos-telegram
+    restart: unless-stopped
+    environment:
+      SERVICE_NAME: telegram_bot
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      N8N_WEBHOOK_URL: http://n8n:5678/webhook
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-cineos}
+      POSTGRES_USER: ${POSTGRES_USER:-cineos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      DEFAULT_LANGUAGE: ${DEFAULT_LANGUAGE:-en}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: ${TZ:-UTC}
+    volumes:
+      - ./config:/app/config:ro
+      - ./temp:/app/temp
+    depends_on:
+      n8n:
+        condition: service_healthy
+    networks:
+      - cineos-network
+
+# ── Volumes ────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  n8n_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ── Networks ───────────────────────────────────────────────────────────────
+networks:
+  cineos-network:
+    driver: bridge

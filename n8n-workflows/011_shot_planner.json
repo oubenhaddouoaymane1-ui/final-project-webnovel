@@ -1,0 +1,449 @@
+{
+  "name": "011 - Shot Planner",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "shot/plan",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-011",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "shot-planner-011"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, p.language, s.id AS scene_id, s.scene_number, s.title AS scene_title, s.summary, s.characters_present, s.location, s.time_period, s.emotional_tone, s.word_count, s.production_metadata, c.chapter_number FROM projects p JOIN scenes s ON p.id = s.project_id JOIN chapters c ON s.chapter_id = c.id WHERE p.id = $1 AND p.state = 'planned' ORDER BY c.chapter_number, s.scene_number",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-scenes-011",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-scenes-011",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-011",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const sceneRows = $input.first().json.rows;\nconst projectId = sceneRows[0].project_id;\n\nconst scenes = sceneRows.map(row => ({\n  id: row.scene_id,\n  scene_number: row.scene_number,\n  chapter_number: row.chapter_number,\n  title: row.scene_title,\n  summary: row.summary,\n  characters_present: JSON.parse(row.characters_present || '[]'),\n  location: row.location,\n  time_period: row.time_period,\n  emotional_tone: row.emotional_tone,\n  word_count: row.word_count || 0,\n  production_metadata: row.production_metadata || {}\n}));\n\nconst batchSize = 5;\nconst batches = [];\nfor (let i = 0; i < scenes.length; i += batchSize) {\n  batches.push(scenes.slice(i, i + batchSize));\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    title: sceneRows[0].title,\n    language: sceneRows[0].language,\n    scenes: scenes,\n    total_scenes: scenes.length,\n    batches: batches,\n    total_batches: batches.length\n  }\n}];"
+      },
+      "id": "code-prepare-011",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": \"You are a cinematic shot planner. For each scene below, generate a detailed shot list.\\n\\nProject: '{{ $('Execute Logic').item.json.title }}'\\n\\nScenes: {{ JSON.stringify($('Execute Logic').item.json.batches[0]) }}\\n\\nFor each scene, generate:\\n1. total_shots: number of shots\\n2. shot_budget: estimated cost tier (low/medium/high)\\n3. shots: array of {\\n     shot_id: unique string,\\n     shot_number: sequential int,\\n     shot_type: {wide, medium, close-up, extreme-close-up, over-shoulder, pov, aerial, tracking},\\n     duration_seconds: estimated duration,\\n     description: what happens in the shot,\\n     characters_in_shot: array of character names,\\n     camera_movement: {static, pan, tilt, dolly, zoom, handheld, steadicam, crane},\\n     transition_in: {cut, dissolve, fade-in, wipe, match-cut},\\n     transition_out: {cut, dissolve, fade-out, wipe, match-cut},\\n     priority: {critical, high, medium, low},\\n     vfx_required: boolean,\\n     dialogue_in_shot: boolean\\n   }\\n\\nReturn as JSON array with scene_id as key for each entry.\",\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-shots-011",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || '{}';\nlet shotData = [];\n\ntry {\n  const jsonMatch = responseText.match(/\\[[\\s\\S]*\\]/);\n  if (jsonMatch) {\n    shotData = JSON.parse(jsonMatch[0]);\n  } else {\n    const objMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      const parsed = JSON.parse(objMatch[0]);\n      shotData = Object.entries(parsed).map(([key, val]) => ({ scene_id: key, ...val }));\n    }\n  }\n} catch (e) {\n  shotData = [];\n}\n\nconst scenes = $('Execute Logic').item.json.scenes;\nconst projectId = $('Execute Logic').item.json.project_id;\n\nlet totalShots = 0;\nconst shotInserts = [];\n\nfor (const sd of shotData) {\n  const scene = scenes.find(s => s.id === sd.scene_id);\n  if (!sd.shots) continue;\n\n  for (const shot of sd.shots) {\n    totalShots++;\n    shotInserts.push({\n      json: {\n        scene_id: sd.scene_id,\n        project_id: projectId,\n        shot_number: shot.shot_number,\n        shot_type: shot.shot_type,\n        duration_seconds: shot.duration_seconds || 5,\n        description: shot.description || '',\n        characters_in_shot: JSON.stringify(shot.characters_in_shot || []),\n        camera_movement: shot.camera_movement || 'static',\n        transition_in: shot.transition_in || 'cut',\n        transition_out: shot.transition_out || 'cut',\n        priority: shot.priority || 'medium',\n        vfx_required: shot.vfx_required || false,\n        dialogue_in_shot: shot.dialogue_in_shot || false,\n        state: 'planned'\n      }\n    });\n  }\n}\n\nconst totalDuration = shotInserts.reduce((sum, s) => sum + s.json.duration_seconds, 0);\n\nreturn [{\n  json: {\n    project_id: projectId,\n    shot_inserts: shotInserts,\n    total_shots: totalShots,\n    total_scenes: shotData.length,\n    total_duration_seconds: totalDuration,\n    total_duration_formatted: `${Math.floor(totalDuration / 60)}m ${totalDuration % 60}s`\n  }\n}];"
+      },
+      "id": "code-process-shots-011",
+      "name": "Execute Logic (Shots)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO shots (scene_id, project_id, shot_number, shot_type, duration_seconds, description, characters_in_shot, camera_movement, transition_in, transition_out, priority, vfx_required, dialogue_in_shot, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9, $10, $11, $12, $13, $14, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.scene_id }}"
+              },
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.shot_number }}"
+              },
+              {
+                "value": "={{ $json.shot_type }}"
+              },
+              {
+                "value": "={{ $json.duration_seconds }}"
+              },
+              {
+                "value": "={{ $json.description }}"
+              },
+              {
+                "value": "={{ $json.characters_in_shot }}"
+              },
+              {
+                "value": "={{ $json.camera_movement }}"
+              },
+              {
+                "value": "={{ $json.transition_in }}"
+              },
+              {
+                "value": "={{ $json.transition_out }}"
+              },
+              {
+                "value": "={{ $json.priority }}"
+              },
+              {
+                "value": "={{ $json.vfx_required }}"
+              },
+              {
+                "value": "={{ $json.dialogue_in_shot }}"
+              },
+              {
+                "value": "={{ $json.state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-shots-011",
+      "name": "Store Shots",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'shot_planned', total_shots = $2, estimated_duration_seconds = $3, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Shots)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ $('Execute Logic (Shots)').item.json.total_shots }}"
+              },
+              {
+                "value": "={{ $('Execute Logic (Shots)').item.json.total_duration_seconds }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-state-011",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'shots_planned', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Shots)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'shot_planned', total_shots: $('Execute Logic (Shots)').item.json.total_shots, total_scenes: $('Execute Logic (Shots)').item.json.total_scenes, estimated_duration: $('Execute Logic (Shots)').item.json.total_duration_formatted }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-011",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=🎬 Shot planning complete!\n\n📋 Project: {{ $('Execute Logic (Shots)').item.json.project_id }}\n🎥 Total shots: {{ $('Execute Logic (Shots)').item.json.total_shots }}\n🎞️ Scenes covered: {{ $('Execute Logic (Shots)').item.json.total_scenes }}\n⏱️ Est. duration: {{ $('Execute Logic (Shots)').item.json.total_duration_formatted }}"
+      },
+      "id": "tg-011",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2200, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Shots)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "shot_planned"
+            },
+            {
+              "name": "current_state",
+              "value": "planned"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-011",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2420, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'shot_planned', project_id: $('Execute Logic (Shots)').item.json.project_id, total_shots: $('Execute Logic (Shots)').item.json.total_shots, estimated_duration: $('Execute Logic (Shots)').item.json.total_duration_formatted }) }}"
+      },
+      "id": "respond-011",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'Project not in planned state or no scenes found' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-011",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Shots)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Shots)": {
+      "main": [
+        [
+          {
+            "node": "Store Shots",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Shots": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

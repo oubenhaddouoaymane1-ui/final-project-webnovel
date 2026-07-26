@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/animation_request.json",
+  "title": "Animation Request",
+  "description": "Request body for the POST /api/animate endpoint. Converts a still image into an animated clip.",
+  "type": "object",
+  "required": ["image_id"],
+  "properties": {
+    "image_id": {
+      "type": "string",
+      "description": "ID of the still image to animate."
+    },
+    "scene_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Optional scene reference for tracking."
+    },
+    "shot_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Optional shot reference."
+    },
+    "animation_type": {
+      "type": "string",
+      "enum": ["ken_burns", "parallax", "particle", "lip_sync", "character_motion", "camera_move"],
+      "default": "ken_burns",
+      "description": "Type of animation effect to apply."
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 30.0,
+      "default": 5.0,
+      "description": "Output clip duration in seconds."
+    },
+    "motion_params": {
+      "type": "object",
+      "description": "Animation-type-specific parameters.",
+      "additionalProperties": true,
+      "properties": {
+        "zoom_start": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 3.0,
+          "default": 1.0,
+          "description": "Initial zoom level (Ken Burns)."
+        },
+        "zoom_end": {
+          "type": "number",
+          "minimum": 0.5,
+          "maximum": 3.0,
+          "default": 1.2,
+          "description": "Final zoom level (Ken Burns)."
+        },
+        "pan_x": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": 0,
+          "description": "Horizontal pan amount (-1 = left, 1 = right)."
+        },
+        "pan_y": {
+          "type": "number",
+          "minimum": -1.0,
+          "maximum": 1.0,
+          "default": 0,
+          "description": "Vertical pan amount (-1 = up, 1 = down)."
+        },
+        "blur_amount": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 20,
+          "default": 0,
+          "description": "Gaussian blur amount for depth-of-field effects."
+        },
+        "particle_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 500,
+          "default": 50,
+          "description": "Number of particles (particle animation type)."
+        },
+        "particle_type": {
+          "type": "string",
+          "enum": ["dust", "rain", "snow", "fire", "sparkle", "fog"],
+          "default": "dust",
+          "description": "Particle visual style."
+        }
+      }
+    },
+    "depth_map_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Pre-computed depth map image ID for parallax animation."
+    },
+    "output_format": {
+      "type": "string",
+      "enum": ["mp4", "webm", "gif"],
+      "default": "mp4",
+      "description": "Output animation format."
+    },
+    "fps": {
+      "type": "integer",
+      "minimum": 12,
+      "maximum": 60,
+      "default": 24,
+      "description": "Output frames per second."
+    },
+    "resolution": {
+      "type": "string",
+      "enum": ["same", "1280x720", "1920x1080"],
+      "default": "same",
+      "description": "Output resolution. 'same' preserves the source image dimensions."
+    },
+    "backend_preference": {
+      "type": "string",
+      "nullable": true,
+      "description": "Preferred animation backend."
+    },
+    "callback_url": {
+      "type": "string",
+      "format": "uri",
+      "nullable": true,
+      "description": "URL to POST the result to when animation completes."
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "image_id": "img-01H8X9A3B",
+      "scene_id": "scn-01H8X9A3B",
+      "shot_id": "sht-01H8X9A3B",
+      "animation_type": "ken_burns",
+      "duration_seconds": 5.0,
+      "motion_params": {
+        "zoom_start": 1.0,
+        "zoom_end": 1.2,
+        "pan_x": 0.1,
+        "pan_y": -0.05,
+        "blur_amount": 0,
+        "particle_count": 0,
+        "particle_type": "dust"
+      },
+      "depth_map_id": null,
+      "output_format": "mp4",
+      "fps": 24,
+      "resolution": "same",
+      "backend_preference": "ffmpeg",
+      "callback_url": "https://n8n.cineos.dev/webhook/render_callback"
+    },
+    {
+      "image_id": "img-01H8X9A3C",
+      "scene_id": "scn-01H8X9A3B",
+      "shot_id": "sht-01H8X9A3C",
+      "animation_type": "particle",
+      "duration_seconds": 3.0,
+      "motion_params": {
+        "particle_count": 100,
+        "particle_type": "fog",
+        "pan_x": 0,
+        "pan_y": 0
+      },
+      "depth_map_id": null,
+      "output_format": "mp4",
+      "fps": 24,
+      "resolution": "same",
+      "backend_preference": "ffmpeg",
+      "callback_url": "https://n8n.cineos.dev/webhook/render_callback"
+    }
+  ]
+}

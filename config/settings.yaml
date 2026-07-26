@@ -1,0 +1,45 @@
+# CineOS System Settings
+system:
+  name: "CineOS"
+  version: "1.0.0"
+  environment: "production"  # production | development | testing
+  
+database:
+  host: "${POSTGRES_HOST:-postgres}"
+  port: ${POSTGRES_PORT:-5432}
+  name: "${POSTGRES_DB:-cineos}"
+  user: "${POSTGRES_USER:-cineos}"
+  password: "${POSTGRES_PASSWORD:-cineos_secret}"
+  pool_min: 2
+  pool_max: 10
+  ssl_mode: "prefer"
+
+redis:
+  host: "${REDIS_HOST:-redis}"
+  port: ${REDIS_PORT:-6379}
+  db: 0
+  password: ""
+
+n8n:
+  host: "${N8N_HOST:-n8n}"
+  port: ${N8N_PORT:-5678}
+  protocol: "http"
+  webhook_base: "http://n8n:5678/webhook"
+  api_key: "${N8N_API_KEY:-}"
+
+storage:
+  base_path: "/data"
+  images_path: "/data/generated/images"
+  audio_path: "/data/generated/audio"
+  video_path: "/data/generated/video"
+  temp_path: "/data/temp"
+  cache_path: "/data/cache"
+  max_storage_gb: 100
+
+logging:
+  level: "${LOG_LEVEL:-INFO}"
+  format: "%(asctime)s | %(levelname)-8s | %(name)s | %(message)s"
+  file: "/data/logs/cineos.log"
+  max_size_mb: 50
+  backup_count: 10
+  json_format: false

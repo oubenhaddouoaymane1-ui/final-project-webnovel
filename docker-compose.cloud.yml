@@ -1,0 +1,100 @@
+##############################################################################
+# CineOS — Cloud Deployment Override
+# Usage: docker compose -f docker-compose.yml -f docker-compose.cloud.yml up -d
+#
+# Adds the cloud bridge service and tunes for cloud provider deployment.
+# PostgreSQL and Redis should use managed services in production.
+##############################################################################
+services:
+
+  # ── Cloud Bridge (dispatches to Pollinations, HF, OpenRouter, Colab) ──────
+  cloud_bridge:
+    build:
+      context: ./docker/cloud_bridge
+      dockerfile: Dockerfile
+    container_name: cineos-cloud-bridge
+    restart: unless-stopped
+    ports:
+      - "8600:8600"
+    environment:
+      SERVICE_NAME: cloud_bridge
+      BRIDGE_PORT: 8600
+      POSTGRES_HOST: ${POSTGRES_HOST:-postgres}
+      POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+      POSTGRES_DB: ${POSTGRES_DB:-cineos}
+      POSTGRES_USER: ${POSTGRES_USER:-cineos}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_in_production}
+      REDIS_HOST: ${REDIS_HOST:-redis}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      HF_API_KEY: ${HF_API_KEY:-}
+      POLLINATIONS_ENABLED: ${POLLINATIONS_ENABLED:-true}
+      COLAB_COMFYUI_ENDPOINT: ${COLAB_COMFYUI_ENDPOINT:-}
+      COLAB_API_KEY: ${COLAB_API_KEY:-}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      TZ: ${TZ:-UTC}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - cineos-network
+
+  # ── Override n8n for cloud: bind to all interfaces, use HTTPS webhook ────
+  n8n:
+    environment:
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-https}
+      WEBHOOK_URL: ${WEBHOOK_URL:-https://your-domain.com/}
+      N8N_BASIC_AUTH_ACTIVE: "true"
+      N8N_BASIC_AUTH_USER: ${N8N_BASIC_AUTH_USER:-admin}
+      N8N_BASIC_AUTH_PASSWORD: ${N8N_BASIC_AUTH_PASSWORD:-changeme}
+
+  # ── Supervisor: add cloud_bridge dependency ──────────────────────────────
+  supervisor:
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cloud_bridge:
+        condition: service_started
+    environment:
+      CLOUD_BRIDGE_URL: ${CLOUD_BRIDGE_URL:-http://cloud_bridge:8600}
+
+  # ── Render Worker: increase for cloud throughput ─────────────────────────
+  render_worker:
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  # ── PostgreSQL: use managed service in production ────────────────────────
+  # When using a managed Postgres (Neon, Supabase, GCP Cloud SQL, etc.),
+  # set POSTGRES_HOST in .env and comment out this service:
+  #
+  # postgres:
+  #   profiles:
+  #     - local  # only starts with: docker compose --profile local up
+
+  # ── Redis: use managed service in production ─────────────────────────────
+  # When using a managed Redis (Upstash, Redis Cloud, etc.),
+  # set REDIS_HOST in .env and comment out this service:
+  #
+  # redis:
+  #   profiles:
+  #     - local
+
+# ── Volumes ────────────────────────────────────────────────────────────────
+volumes:
+  postgres_data:
+    driver: local
+  n8n_data:
+    driver: local
+  redis_data:
+    driver: local
+
+# ── Networks ───────────────────────────────────────────────────────────────
+networks:
+  cineos-network:
+    driver: bridge

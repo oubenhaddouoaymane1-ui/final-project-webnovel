@@ -1,0 +1,200 @@
+{
+  "name": "029 - System Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id, p.title, p.state, p.updated_at, EXTRACT(EPOCH FROM (NOW() - p.updated_at)) as idle_seconds FROM projects p WHERE p.state NOT IN ('completed', 'delivered', 'learned', 'failed', 'cancelled') AND p.updated_at < NOW() - INTERVAL '30 minutes' ORDER BY p.updated_at ASC",
+        "additionalFields": {}
+      },
+      "id": "check-stuck-projects",
+      "name": "Check Stuck Projects",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.WORKER_URL }}/system/health",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-system-health",
+      "name": "Check System Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 420]
+    },
+    {
+      "parameters": {
+        "jsCode": "const stuckProjects = $('Check Stuck Projects').first().json.rows || [];\nconst systemHealth = $input.first().json;\n\nconst issues = [];\n\nif (stuckProjects.length > 0) {\n  issues.push({\n    type: 'stuck_projects',\n    severity: 'high',\n    count: stuckProjects.length,\n    details: stuckProjects.map(p => ({\n      id: p.id,\n      title: p.title,\n      state: p.state,\n      idle_minutes: Math.round(p.idle_seconds / 60)\n    }))\n  });\n}\n\nif (systemHealth.status === 'degraded') {\n  issues.push({\n    type: 'system_degraded',\n    severity: 'medium',\n    details: systemHealth\n  });\n}\n\nif (systemHealth.status === 'down') {\n  issues.push({\n    type: 'system_down',\n    severity: 'critical',\n    details: systemHealth\n  });\n}\n\nif (systemHealth.disk_usage > 90) {\n  issues.push({\n    type: 'disk_space',\n    severity: 'high',\n    details: { usage: systemHealth.disk_usage + '%' }\n  });\n}\n\nif (systemHealth.memory_usage > 90) {\n  issues.push({\n    type: 'memory_pressure',\n    severity: 'high',\n    details: { usage: systemHealth.memory_usage + '%' }\n  });\n}\n\nreturn [{\n  json: {\n    issues: issues,\n    total_issues: issues.length,\n    stuck_projects: stuckProjects,\n    system_health: systemHealth,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "generate-health-report",
+      "name": "Generate Health Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 360]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO system_health_logs (issues, stuck_projects, system_health, checked_at) VALUES ($1::jsonb, $2::jsonb, $3::jsonb, NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "store-health-log",
+      "name": "Store Health Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [860, 360],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-issues",
+              "leftValue": "={{ $json.total_issues }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-issues",
+      "name": "Has Issues?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1080, 360]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.ADMIN_CHAT_ID }}",
+        "text": "🔴 System Health Alert\n\nIssues detected: {{ $json.total_issues }}\n\n{{ $json.issues.map(i => '• [' + i.severity.toUpperCase() + '] ' + i.type + ': ' + JSON.stringify(i.details)).join('\\n') }}\n\nStuck projects: {{ $json.stuck_projects.length }}\nTimestamp: {{ $json.timestamp }}",
+        "additionalFields": {}
+      },
+      "id": "notify-admin",
+      "name": "Notify Admin",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1300, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'stuck', updated_at = NOW(), error_log = error_log || jsonb_build_object('error', 'Project stuck - no activity for 30+ minutes', 'detected_at', NOW()) WHERE id = $1 AND state NOT IN ('completed', 'delivered', 'learned', 'failed', 'cancelled') RETURNING id, title, state",
+        "additionalFields": {}
+      },
+      "id": "mark-stuck-projects",
+      "name": "Mark Stuck Projects",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1300, 420],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          { "node": "Check Stuck Projects", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Stuck Projects": {
+      "main": [
+        [
+          { "node": "Generate Health Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check System Health": {
+      "main": [
+        [
+          { "node": "Generate Health Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Generate Health Report": {
+      "main": [
+        [
+          { "node": "Store Health Log", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Store Health Log": {
+      "main": [
+        [
+          { "node": "Has Issues?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Issues?": {
+      "main": [
+        [
+          { "node": "Notify Admin", "type": "main", "index": 0 },
+          { "node": "Mark Stuck Projects", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "monitoring" },
+    { "name": "system" }
+  ]
+}

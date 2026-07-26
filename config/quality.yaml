@@ -1,0 +1,89 @@
+# Quality Assurance Configuration
+thresholds:
+  auto_approve: 0.90
+  minor_repair: 0.80
+  partial_repair: 0.60
+  regenerate: 0.40
+  hard_failure: 0.20
+
+checks:
+  image:
+    technical_quality:
+      weight: 0.25
+      min_score: 0.60
+    prompt_alignment:
+      weight: 0.25
+      min_score: 0.60
+    character_consistency:
+      weight: 0.20
+      min_score: 0.70
+    world_consistency:
+      weight: 0.15
+      min_score: 0.60
+    composition:
+      weight: 0.15
+      min_score: 0.50
+
+  audio:
+    naturalness:
+      weight: 0.30
+      min_score: 0.50
+    emotion_match:
+      weight: 0.25
+      min_score: 0.40
+    duration_fit:
+      weight: 0.25
+      min_score: 0.60
+    clarity:
+      weight: 0.20
+      min_score: 0.50
+
+  video:
+    audio_video_sync:
+      weight: 0.30
+      min_score: 0.70
+    motion_quality:
+      weight: 0.25
+      min_score: 0.60
+    visual_quality:
+      weight: 0.25
+      min_score: 0.60
+    transition_smoothness:
+      weight: 0.20
+      min_score: 0.50
+
+repair:
+  max_attempts: 3
+  escalation_threshold: 0.30
+  priority_order:
+    - face
+    - eyes
+    - hands
+    - weapon
+    - armour
+    - outfit
+    - background
+    - lighting
+    - composition
+    - color
+    - atmosphere
+
+  strategies:
+    face:
+      - prompt_enhancement
+      - seed_change
+      - face_detailer
+      - full_regeneration
+    eyes:
+      - prompt_enhancement
+      - face_detailer
+      - full_regeneration
+    hands:
+      - prompt_enhancement
+      - inpainting
+      - full_regeneration
+    default:
+      - prompt_enhancement
+      - seed_change
+      - inpainting
+      - full_regeneration

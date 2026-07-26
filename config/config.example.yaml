@@ -1,0 +1,80 @@
+# System Configuration
+system:
+  name: "Novel to Cinematic Video Pipeline"
+  version: "1.0.0"
+  log_level: "INFO"
+  debug: false
+  
+# Database Configuration
+database:
+  path: "./database"
+  backup_interval: 3600  # seconds
+  max_connections: 5
+  
+# Telegram Configuration
+telegram:
+  bot_token: "${TELEGRAM_BOT_TOKEN}"  # Set in environment variable
+  max_file_size: 50000000  # 50MB
+  allowed_users: []  # Empty = allow all
+  
+# LLM Configuration
+llm:
+  model: "llama3.1:8b"
+  temperature: 0.7
+  max_tokens: 4096
+  top_p: 0.9
+  
+# Image Generation Configuration
+image:
+  model: "animagine-xl-4.0"
+  width: 1024
+  height: 1024
+  steps: 30
+  cfg_scale: 7.0
+  candidates_per_scene: 3
+  max_retries: 3
+  
+# Audio Configuration
+audio:
+  model: "kokoro-82m"
+  voice: "default"
+  speed: 1.0
+  sample_rate: 22050
+  
+# Video Configuration
+video:
+  fps: 24
+  resolution: "1920x1080"
+  format: "mp4"
+  codec: "libx264"
+  bitrate: "8M"
+  
+# Quality Thresholds
+quality:
+  character_consistency: 0.9
+  visual_score: 8.0
+  audio_score: 8.0
+  overall_score: 8.0
+  max_iterations: 3
+  
+# Processing Configuration
+processing:
+  checkpoint_interval: 10  # scenes
+  max_parallel_scenes: 1
+  timeout: 3600  # seconds
+  
+# Storage Configuration
+storage:
+  images_path: "./generated/images"
+  audio_path: "./generated/audio"
+  video_path: "./generated/video"
+  checkpoints_path: "./checkpoints"
+  temp_path: "./temp"
+  
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "./logs/pipeline.log"
+  rotation: "10 MB"
+  retention: "7 days"

@@ -1,0 +1,99 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CineOS — Model Configuration (Cloud-First)
+# ALL heavy AI runs on free cloud services. Local PC = lightweight controller.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+llm:
+  primary: "openrouter"
+  openrouter:
+    enabled: true
+    api_key: "${OPENROUTER_API_KEY:-}"
+    model: "meta-llama/llama-3.2-3b-instruct"
+    base_url: "https://openrouter.ai/api/v1"
+    temperature: 0.5
+    max_tokens: 4096
+
+# ── Image Generation (cloud only — no local GPU) ────────────────────────────
+image:
+  primary: "pollinations"
+  backends:
+    pollinations:
+      enabled: true
+      base_url: "https://image.pollinations.ai/prompt"
+      width: 1920
+      height: 1080
+      model: "flux"
+      description: "Free image generation — no API key, no GPU"
+    colab_comfyui:
+      enabled: false
+      endpoint_url: "${COLAB_COMFYUI_ENDPOINT:-}"
+      api_key: "${COLAB_API_KEY:-}"
+      description: "Google Colab running ComfyUI + FLUX — start Colab when needed"
+    hf_inference:
+      enabled: false
+      api_key: "${HF_API_KEY:-}"
+      model: "stabilityai/stable-diffusion-xl-base-1.0"
+      base_url: "https://api-inference.huggingface.co/models"
+  super_resolution:
+    primary: "cloud"
+    cloud_esrgan:
+      enabled: true
+      endpoint_url: "${COLAB_ESRGAN_ENDPOINT:-}"
+      description: "RealESRGAN on Google Colab — free GPU upscaling"
+
+# ── Voice / TTS (cloud — free Microsoft Edge TTS) ───────────────────────────
+voice:
+  primary: "edge_tts"
+  backends:
+    edge_tts:
+      enabled: true
+      description: "Free Microsoft Edge TTS — no API key needed"
+      voices:
+        en: "en-US-AriaNeural"
+        en_male: "en-US-GuyNeural"
+        ar: "ar-SA-ZariyahNeural"
+        ar_male: "ar-SA-HamedNeural"
+        fr: "fr-FR-DeniseNeural"
+        de: "de-DE-KatjaNeural"
+        es: "es-ES-ElviraNeural"
+        ja: "ja-JP-NanamiNeural"
+        ko: "ko-KR-SunHiNeural"
+        zh: "zh-CN-XiaoxiaoNeural"
+    kokoro_cloud:
+      enabled: false
+      endpoint_url: "${COLAB_KOKORO_ENDPOINT:-}"
+      description: "Kokoro TTS on Google Colab (optional, higher quality)"
+
+# ── Animation (local CPU + optional cloud GPU) ──────────────────────────────
+animation:
+  primary: "ffmpeg_kenburns"
+  backends:
+    ffmpeg_kenburns:
+      enabled: true
+      description: "FFmpeg Ken Burns — runs locally, lightweight, no GPU needed"
+    liveportrait_cloud:
+      enabled: false
+      endpoint_url: "${COLAB_LIVEPORTRAIT_ENDPOINT:-}"
+      description: "LivePortrait on Google Colab (optional, higher quality animation)"
+
+# ── Video Rendering (local CPU only) ────────────────────────────────────────
+render:
+  backend: "ffmpeg"
+  ffmpeg_path: "ffmpeg"
+  fps: 24
+  resolution: "1920x1080"
+  codec: "libx264"
+  preset: "fast"
+  crf: 20
+  audio_codec: "aac"
+  audio_bitrate: "192k"
+
+# ── Quality Review (cloud vision) ────────────────────────────────────────────
+quality_review:
+  primary: "openrouter_vision"
+  backends:
+    openrouter_vision:
+      enabled: true
+      api_key: "${OPENROUTER_API_KEY:-}"
+      model: "google/gemini-flash-1.5"
+      description: "Gemini Flash via OpenRouter for image review (free)"

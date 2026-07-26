@@ -1,0 +1,471 @@
+{
+  "name": "020 - Voice Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "voice/generate",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-020",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "voice-engine-020"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, p.language, s.id AS scene_id, s.scene_number, s.characters_present, s.emotional_tone, ch.id AS shot_id, ch.shot_number, ch.description, ch.duration_seconds, ch.dialogue_in_shot FROM projects p JOIN shots ch ON p.id = ch.project_id JOIN scenes s ON ch.scene_id = s.id WHERE p.id = $1 AND p.state IN ('shot_planned', 'fight_choreographed', 'emotion_directed', 'prompted', 'generating') AND ch.state != 'voiced' AND (ch.description IS NOT NULL AND ch.description != '') ORDER BY s.scene_number, ch.shot_number",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-shots-020",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-shots-020",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-020",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT c.id AS character_id, c.name, c.voice_profile, c.description FROM characters c WHERE c.project_id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-characters-020",
+      "name": "Load Characters",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [880, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const shotRows = $input.first().json.rows;\nconst projectId = shotRows[0].project_id;\n\nlet characters = [];\ntry {\n  characters = $('Load Characters').item.json.rows || [];\n} catch (e) {\n  characters = [];\n}\n\nconst characterMap = {};\nfor (const c of characters) {\n  characterMap[c.name] = {\n    character_id: c.character_id,\n    voice_profile: c.voice_profile || 'narrator',\n    description: c.description\n  };\n}\n\nconst narrationShots = shotRows.map(row => ({\n  shot_id: row.shot_id,\n  shot_number: row.shot_number,\n  scene_id: row.scene_id,\n  scene_number: row.scene_number,\n  description: row.description,\n  duration_seconds: row.duration_seconds,\n  characters_present: JSON.parse(row.characters_present || '[]'),\n  emotional_tone: row.emotional_tone,\n  dialogue_in_shot: row.dialogue_in_shot\n}));\n\nconst batchSize = 10;\nconst batches = [];\nfor (let i = 0; i < narrationShots.length; i += batchSize) {\n  batches.push(narrationShots.slice(i, i + batchSize));\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    title: shotRows[0].title,\n    language: shotRows[0].language,\n    narration_shots: narrationShots,\n    character_map: characterMap,\n    total_shots: narrationShots.length,\n    batches: batches,\n    total_batches: batches.length\n  }\n}];"
+      },
+      "id": "code-prepare-020",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": \"You are a voice and narration director. Assign voices and generate narration text for each shot.\\n\\nProject: '{{ $('Execute Logic').item.json.title }}'\\nCharacter profiles: {{ JSON.stringify($('Execute Logic').item.json.character_map) }}\\n\\nShots batch: {{ JSON.stringify($('Execute Logic').item.json.batches[0]) }}\\n\\nFor each shot, generate:\\n1. narration_text: the text to be spoken by TTS\\n2. voice_id: which voice profile to use (character name or narrator)\\n3. voice_params: {speed: 0.8-1.2, pitch: -2 to 2, emotion: string}\\n4. narration_type: {narration, dialogue, internal_monologue}\\n5. priority: {high, medium, low}\\n6. estimated_audio_duration: seconds\\n\\nReturn as JSON array with shot_id as key.\",\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-voice-020",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || '{}';\nlet voiceData = [];\n\ntry {\n  const jsonMatch = responseText.match(/\\[[\\s\\S]*\\]/);\n  if (jsonMatch) {\n    voiceData = JSON.parse(jsonMatch[0]);\n  } else {\n    const objMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      const parsed = JSON.parse(objMatch[0]);\n      voiceData = Object.entries(parsed).map(([key, val]) => ({ shot_id: key, ...val }));\n    }\n  }\n} catch (e) {\n  voiceData = [];\n}\n\nconst projectId = $('Execute Logic').item.json.project_id;\n\nconst audioJobs = [];\nlet totalNarrations = 0;\n\nfor (const vd of voiceData) {\n  totalNarrations++;\n  audioJobs.push({\n    json: {\n      job_type: 'tts_generation',\n      shot_id: vd.shot_id,\n      project_id: projectId,\n      narration_text: vd.narration_text || '',\n      voice_id: vd.voice_id || 'narrator',\n      voice_params: JSON.stringify(vd.voice_params || {}),\n      narration_type: vd.narration_type || 'narration',\n      priority: vd.priority || 'medium',\n      estimated_audio_duration: vd.estimated_audio_duration || 5,\n      state: 'pending'\n    }\n  });\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    audio_jobs: audioJobs,\n    total_narrations: totalNarrations\n  }\n}];"
+      },
+      "id": "code-process-voice-020",
+      "name": "Execute Logic (Voice)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jobs (job_type, shot_id, project_id, narration_text, voice_id, voice_params, narration_type, priority, estimated_audio_duration, state, created_at) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9, $10, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.job_type }}"
+              },
+              {
+                "value": "={{ $json.shot_id }}"
+              },
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.narration_text }}"
+              },
+              {
+                "value": "={{ $json.voice_id }}"
+              },
+              {
+                "value": "={{ $json.voice_params }}"
+              },
+              {
+                "value": "={{ $json.narration_type }}"
+              },
+              {
+                "value": "={{ $json.priority }}"
+              },
+              {
+                "value": "={{ $json.estimated_audio_duration }}"
+              },
+              {
+                "value": "={{ $json.state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-jobs-020",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'voiced', voice_jobs_count = $2, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Voice)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ $('Execute Logic (Voice)').item.json.total_narrations }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-state-020",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'voice_jobs_created', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Voice)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'voiced', total_narrations: $('Execute Logic (Voice)').item.json.total_narrations }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-020",
+      "name": "Store Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2200, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=🎙️ Voice engine complete!\n\n📋 Project: {{ $('Execute Logic (Voice)').item.json.project_id }}\n🔊 TTS jobs created: {{ $('Execute Logic (Voice)').item.json.total_narrations }}\n🔄 State transitioned to 'voiced'"
+      },
+      "id": "tg-020",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2420, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Voice)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "voiced"
+            },
+            {
+              "name": "current_state",
+              "value": "generating"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-020",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'voiced', project_id: $('Execute Logic (Voice)').item.json.project_id, total_narrations: $('Execute Logic (Voice)').item.json.total_narrations }) }}"
+      },
+      "id": "respond-020",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'No shots found for voice generation' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-020",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Load Characters",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Characters": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Voice)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Voice)": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Store Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Events": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

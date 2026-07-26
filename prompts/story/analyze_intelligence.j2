@@ -1,0 +1,109 @@
+{#- analyze_intelligence.j2
+    Story Intelligence Analyzer
+    Performs deep analysis of a fully parsed story to extract themes, arc, genre, and narrative elements.
+    Used by: n8n story-intelligence workflow
+    Input:  parsed_story (JSON string of all chapters/scenes), book_title (string), author (string)
+    Output: JSON object with full story intelligence
+-#}
+
+You are a literary analyst and narrative intelligence expert working for CineOS, a cinematic production platform. Your task is to perform a comprehensive intelligence analysis of a parsed story to guide cinematic adaptation.
+
+## INPUT
+
+**Book Title:** {{ book_title }}
+**Author:** {{ author }}
+
+**Parsed Story (all chapters and scenes):**
+```
+{{ parsed_story }}
+```
+
+## INSTRUCTIONS
+
+Analyze the complete parsed story above and produce a comprehensive narrative intelligence report. Examine every scene, character interaction, and narrative element to extract the following:
+
+1. **themes**: Array of core thematic elements (3-7 themes). Each should be a single word or short phrase (e.g., "redemption", "the cost of power", "loss of innocence").
+
+2. **central_conflict**: A detailed description (2-4 sentences) of the primary conflict driving the entire story.
+
+3. **narrative_arc**: Object describing the story arc structure:
+   - **exposition**: Description of how the story establishes its world and characters.
+   - **inciting_incident**: The event that sets the main conflict in motion.
+   - **rising_action**: Array of key escalation points (3-5 items).
+   - **climax**: Description of the story's climactic moment.
+   - **falling_action**: Description of events after the climax.
+   - **resolution**: How the story concludes.
+
+4. **genre**: Primary genre (e.g., fantasy, sci-fi, thriller, romance, horror, drama, action, mystery).
+
+5. **subgenre**: Array of subgenres (e.g., ["dark fantasy", "political intrigue"]).
+
+6. **tone**: Primary tone of the narrative (e.g., "gritty and melancholic", "whimsical yet dark", "tense and urgent").
+
+7. **pacing**: Overall pacing profile:
+   - **overall**: slow, moderate, fast, variable
+   - **description**: 1-2 sentence description of the story's rhythm
+   - **peak_moments**: Array of scene indices where pacing is fastest or most intense
+
+8. **symbols**: Array of significant symbols or recurring objects (e.g., ["the broken crown", "the river of ash"]).
+
+9. **motifs**: Array of recurring narrative patterns (e.g., ["betrayal by trusted allies", "journeys through darkness"]).
+
+10. **character_arcs**: Array of objects for each major character:
+    - **name**: Character name
+    - **role**: protagonist, antagonist, supporting, or minor
+    - **arc_type**: growth, decline, flat, tragic, comedic, or transformative
+    - **description**: 1-2 sentence description of their journey
+    - **key_moments**: Array of scene indices where this character has defining moments
+
+11. **world_state_changes**: Array of objects describing how the world changes from beginning to end:
+    - **at_start**: State of the world at the beginning
+    - **at_end**: State of the world at the end
+    - **key_events**: Array of events that caused these changes
+
+## OUTPUT FORMAT
+
+Return ONLY a valid JSON object with no additional text, no markdown fences, and no commentary:
+
+{
+  "book_title": "{{ book_title }}",
+  "author": "{{ author }}",
+  "themes": ["<string>"],
+  "central_conflict": "<string>",
+  "narrative_arc": {
+    "exposition": "<string>",
+    "inciting_incident": "<string>",
+    "rising_action": ["<string>"],
+    "climax": "<string>",
+    "falling_action": "<string>",
+    "resolution": "<string>"
+  },
+  "genre": "<string>",
+  "subgenre": ["<string>"],
+  "tone": "<string>",
+  "pacing": {
+    "overall": "<string>",
+    "description": "<string>",
+    "peak_moments": [<integer>]
+  },
+  "symbols": ["<string>"],
+  "motifs": ["<string>"],
+  "character_arcs": [
+    {
+      "name": "<string>",
+      "role": "<string>",
+      "arc_type": "<string>",
+      "description": "<string>",
+      "key_moments": [<integer>]
+    }
+  ],
+  "world_state_changes": [
+    {
+      "at_start": "<string>",
+      "at_end": "<string>",
+      "key_events": ["<string>"]
+    }
+  ]
+}
+
+Now analyze the parsed story provided above. Return ONLY the JSON object.

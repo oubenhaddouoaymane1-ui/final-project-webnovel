@@ -1,0 +1,388 @@
+{
+  "name": "015 - Job Dispatcher",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "job/dispatch",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-015",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "job-dispatcher-015"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, ch.id AS shot_id, ch.shot_number, ch.shot_type, ch.scene_id, ch.duration_seconds, pr.id AS prompt_id, pr.positive_prompt, pr.negative_prompt, pr.aspect_ratio, pr.quality_tier, pr.seed_suggestion FROM projects p JOIN shots ch ON p.id = ch.project_id JOIN prompts pr ON ch.id = pr.shot_id WHERE p.id = $1 AND p.state = 'prompted' AND ch.state = 'prompted' ORDER BY ch.shot_number",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-shots-015",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-shots-015",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-015",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\nconst imageJobs = rows.map(row => ({\n  json: {\n    job_type: 'image_generation',\n    shot_id: row.shot_id,\n    project_id: projectId,\n    prompt_id: row.prompt_id,\n    positive_prompt: row.positive_prompt,\n    negative_prompt: row.negative_prompt,\n    aspect_ratio: row.aspect_ratio || '16:9',\n    quality_tier: row.quality_tier || 'standard',\n    seed: row.seed_suggestion || Math.floor(Math.random() * 999999),\n    priority: 'normal',\n    state: 'pending'\n  }\n}));\n\nconst audioJobs = rows\n  .filter(row => row.duration_seconds > 0)\n  .map(row => ({\n    json: {\n      job_type: 'audio_generation',\n      shot_id: row.shot_id,\n      project_id: projectId,\n      scene_id: row.scene_id,\n      duration_seconds: row.duration_seconds,\n      priority: 'normal',\n      state: 'pending'\n    }\n  }));\n\nreturn [{\n  json: {\n    project_id: projectId,\n    image_jobs: imageJobs,\n    audio_jobs: audioJobs,\n    total_image_jobs: imageJobs.length,\n    total_audio_jobs: audioJobs.length,\n    total_jobs: imageJobs.length + audioJobs.length\n  }\n}];"
+      },
+      "id": "code-prepare-015",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jobs (job_type, shot_id, project_id, prompt_id, positive_prompt, negative_prompt, aspect_ratio, quality_tier, seed, priority, state, created_at) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.job_type }}"
+              },
+              {
+                "value": "={{ $json.shot_id }}"
+              },
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.prompt_id }}"
+              },
+              {
+                "value": "={{ $json.positive_prompt }}"
+              },
+              {
+                "value": "={{ $json.negative_prompt }}"
+              },
+              {
+                "value": "={{ $json.aspect_ratio }}"
+              },
+              {
+                "value": "={{ $json.quality_tier }}"
+              },
+              {
+                "value": "={{ $json.seed }}"
+              },
+              {
+                "value": "={{ $json.priority }}"
+              },
+              {
+                "value": "={{ $json.state }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-image-jobs-015",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'generating', jobs_dispatched = $2, updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic').item.json.project_id }}"
+              },
+              {
+                "value": "={{ $('Execute Logic').item.json.total_jobs }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-state-015",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1320, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'jobs_dispatched', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'generating', total_image_jobs: $('Execute Logic').item.json.total_image_jobs, total_audio_jobs: $('Execute Logic').item.json.total_audio_jobs, total_jobs: $('Execute Logic').item.json.total_jobs }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-015",
+      "name": "Store Events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=⚙️ Jobs dispatched!\n\n📋 Project: {{ $('Execute Logic').item.json.project_id }}\n🖼️ Image jobs: {{ $('Execute Logic').item.json.total_image_jobs }}\n🔊 Audio jobs: {{ $('Execute Logic').item.json.total_audio_jobs }}\n📦 Total: {{ $('Execute Logic').item.json.total_jobs }}\n🔄 State: generating"
+      },
+      "id": "tg-015",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1760, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "generating"
+            },
+            {
+              "name": "current_state",
+              "value": "prompted"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-015",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1980, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'generating', project_id: $('Execute Logic').item.json.project_id, total_image_jobs: $('Execute Logic').item.json.total_image_jobs, total_audio_jobs: $('Execute Logic').item.json.total_audio_jobs }) }}"
+      },
+      "id": "respond-015",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2200, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'No shots ready for dispatch' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-015",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Store Events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Events": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

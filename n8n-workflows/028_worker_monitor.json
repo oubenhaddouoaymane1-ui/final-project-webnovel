@@ -1,0 +1,215 @@
+{
+  "name": "028 - Worker Monitor",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "cron-trigger",
+      "name": "Cron Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.WORKER_URL }}/workers/health",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-worker-health",
+      "name": "Check Worker Health",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [420, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const response = $input.first().json;\nconst workers = response.workers || [];\n\nconst healthReport = workers.map(worker => ({\n  worker_id: worker.id,\n  status: worker.status,\n  cpu_usage: worker.cpu_usage || 0,\n  memory_usage: worker.memory_usage || 0,\n  active_jobs: worker.active_jobs || 0,\n  queue_depth: worker.queue_depth || 0,\n  last_heartbeat: worker.last_heartbeat,\n  uptime: worker.uptime || 0\n}));\n\nconst unhealthyWorkers = healthReport.filter(w => \n  w.status !== 'healthy' || \n  w.cpu_usage > 90 || \n  w.memory_usage > 90 ||\n  (new Date() - new Date(w.last_heartbeat)) > 60000\n);\n\nreturn [{\n  json: {\n    total_workers: healthReport.length,\n    healthy_workers: healthReport.filter(w => w.status === 'healthy').length,\n    unhealthy_workers: unhealthyWorkers.length,\n    workers: healthReport,\n    unhealthy: unhealthyWorkers,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "process-health",
+      "name": "Process Health Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.WORKER_URL }}/jobs/timeouts",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-job-timeouts",
+      "name": "Check Job Timeouts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 420]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.WORKER_URL }}/jobs/queue-depth",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-queue-depth",
+      "name": "Check Queue Depth",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [640, 540]
+    },
+    {
+      "parameters": {
+        "jsCode": "const health = $('Process Health Data').first().json;\nconst timeouts = $input.first().json;\nconst queueDepth = $('Check Queue Depth').first().json;\n\nconst warnings = [];\n\nif (health.unhealthy_workers > 0) {\n  warnings.push({\n    type: 'worker_health',\n    severity: 'high',\n    message: `${health.unhealthy_workers} unhealthy workers detected`,\n    details: health.unhealthy\n  });\n}\n\nif (timeouts.timed_out_jobs && timeouts.timed_out_jobs.length > 0) {\n  warnings.push({\n    type: 'job_timeout',\n    severity: 'high',\n    message: `${timeouts.timed_out_jobs.length} jobs have timed out`,\n    details: timeouts.timed_out_jobs\n  });\n}\n\nif (queueDepth.total_pending > 100) {\n  warnings.push({\n    type: 'queue_depth',\n    severity: 'medium',\n    message: `Queue depth is high: ${queueDepth.total_pending} pending jobs`,\n    details: queueDepth\n  });\n}\n\nif (queueDepth.total_pending > 500) {\n  warnings[warnings.length - 1].severity = 'high';\n}\n\nconst totalWarnings = warnings.length;\nconst highSeverity = warnings.filter(w => w.severity === 'high').length;\n\nreturn [{\n  json: {\n    warnings: warnings,\n    total_warnings: totalWarnings,\n    high_severity: highSeverity,\n    health_summary: health,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "emit-warnings",
+      "name": "Emit Warnings",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO worker_health_logs (total_workers, healthy_workers, unhealthy_workers, warnings, queue_depth, checked_at) VALUES ($1, $2, $3, $4::jsonb, $5, NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "store-health-log",
+      "name": "Store Health Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1080, 420],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-warnings",
+              "leftValue": "={{ $json.high_severity }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-warnings",
+      "name": "Has High Severity?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 420]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $env.ADMIN_CHAT_ID }}",
+        "text": "⚠️ Worker Monitor Alert\n\nHigh severity warnings detected:\n{{ $json.warnings.filter(w => w.severity === 'high').map(w => '- ' + w.message).join('\\n') }}\n\nTotal warnings: {{ $json.total_warnings }}\nTimestamp: {{ $json.timestamp }}",
+        "additionalFields": {}
+      },
+      "id": "notify-admin",
+      "name": "Notify Admin",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1520, 360],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Cron Trigger": {
+      "main": [
+        [
+          { "node": "Check Worker Health", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Worker Health": {
+      "main": [
+        [
+          { "node": "Process Health Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Process Health Data": {
+      "main": [
+        [
+          { "node": "Check Job Timeouts", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Job Timeouts": {
+      "main": [
+        [
+          { "node": "Check Queue Depth", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Queue Depth": {
+      "main": [
+        [
+          { "node": "Emit Warnings", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Warnings": {
+      "main": [
+        [
+          { "node": "Store Health Log", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Store Health Log": {
+      "main": [
+        [
+          { "node": "Has High Severity?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has High Severity?": {
+      "main": [
+        [
+          { "node": "Notify Admin", "type": "main", "index": 0 }
+        ],
+        []
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "monitoring" },
+    { "name": "workers" }
+  ]
+}

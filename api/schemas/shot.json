@@ -1,0 +1,198 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/shot.json",
+  "title": "Shot",
+  "description": "A single shot within a scene — the atomic visual unit of the pipeline.",
+  "type": "object",
+  "required": ["id", "scene_id", "shot_index", "shot_type"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique shot identifier",
+      "examples": ["sht-01H8X9A3B"]
+    },
+    "scene_id": {
+      "type": "string",
+      "description": "Reference to the parent scene",
+      "examples": ["scn-01H8X9A3B"]
+    },
+    "shot_index": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Zero-based order within the scene",
+      "examples": [0]
+    },
+    "shot_type": {
+      "type": "string",
+      "enum": [
+        "establishing",
+        "wide",
+        "medium",
+        "close_up",
+        "extreme_close_up",
+        "over_the_shoulder",
+        "pov",
+        "aerial",
+        "low_angle",
+        "dutch_angle",
+        "insert",
+        "action"
+      ],
+      "description": "Cinematic shot type — determines composition and framing",
+      "examples": ["establishing"]
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0.5,
+      "maximum": 30.0,
+      "description": "Planned duration of this shot in seconds",
+      "examples": [3.0]
+    },
+    "prompt": {
+      "type": "string",
+      "description": "Full positive prompt for image generation",
+      "examples": ["A medieval castle tower at dusk, dramatic lighting, wide angle establishing shot, cinematic, 4K detail, dark clouds gathering"]
+    },
+    "negative_prompt": {
+      "type": "string",
+      "description": "Negative prompt — things to avoid in generation",
+      "examples": ["blurry, low quality, watermark, text, deformed faces, extra limbs"]
+    },
+    "transition_in": {
+      "type": "string",
+      "enum": ["cut", "fade", "crossfade", "dissolve", "wipe", "none"],
+      "default": "cut",
+      "description": "Transition from the previous shot"
+    },
+    "transition_out": {
+      "type": "string",
+      "enum": ["cut", "fade", "crossfade", "dissolve", "wipe", "none"],
+      "default": "cut",
+      "description": "Transition to the next shot"
+    },
+    "animation_type": {
+      "type": "string",
+      "enum": ["none", "ken_burns", "parallax", "particle", "camera_move", "character_motion"],
+      "default": "ken_burns",
+      "description": "Type of motion animation applied to this shot"
+    },
+    "animation_params": {
+      "type": "object",
+      "nullable": true,
+      "description": "Animation-type-specific parameters",
+      "additionalProperties": true,
+      "examples": [
+        {
+          "zoom_start": 1.0,
+          "zoom_end": 1.15,
+          "pan_x": 0.05,
+          "pan_y": -0.02
+        }
+      ]
+    },
+    "camera_motion": {
+      "type": "object",
+      "nullable": true,
+      "description": "Virtual camera movement description",
+      "properties": {
+        "type": {
+          "type": "string",
+          "enum": ["static", "pan_left", "pan_right", "tilt_up", "tilt_down", "dolly_in", "dolly_out", "tracking"]
+        },
+        "speed": {
+          "type": "string",
+          "enum": ["slow", "medium", "fast"],
+          "default": "medium"
+        }
+      }
+    },
+    "characters_in_shot": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "character_id": {
+            "type": "string"
+          },
+          "position": {
+            "type": "string",
+            "enum": ["left", "center", "right", "background"],
+            "description": "Character position in frame"
+          }
+        },
+        "required": ["character_id"]
+      },
+      "default": [],
+      "description": "Characters visible in this shot"
+    },
+    "image_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Reference to the generated image"
+    },
+    "animation_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Reference to the generated animation"
+    },
+    "render_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Reference to the rendered video clip"
+    },
+    "quality_score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 10,
+      "nullable": true,
+      "description": "Quality score for this individual shot"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "generating", "animating", "rendering", "reviewing", "completed", "failed"],
+      "default": "pending",
+      "description": "Shot production status"
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time"
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "id": "sht-01H8X9A3B",
+      "scene_id": "scn-01H8X9A3B",
+      "shot_index": 0,
+      "shot_type": "establishing",
+      "duration_seconds": 3.0,
+      "prompt": "A medieval castle tower at dusk, dramatic lighting, wide angle establishing shot, cinematic, 4K detail, dark clouds gathering",
+      "negative_prompt": "blurry, low quality, watermark, text, deformed faces, extra limbs",
+      "transition_in": "fade",
+      "transition_out": "cut",
+      "animation_type": "ken_burns",
+      "animation_params": {
+        "zoom_start": 1.0,
+        "zoom_end": 1.15,
+        "pan_x": 0.05,
+        "pan_y": -0.02
+      },
+      "camera_motion": {
+        "type": "dolly_in",
+        "speed": "slow"
+      },
+      "characters_in_shot": [],
+      "image_id": "img-01H8X9A3B",
+      "animation_id": "anim-01H8X9A3B",
+      "render_id": "rnd-01H8X9A3B",
+      "quality_score": 8.5,
+      "status": "completed",
+      "created_at": "2026-07-26T09:00:00Z",
+      "updated_at": "2026-07-26T09:15:00Z"
+    }
+  ]
+}

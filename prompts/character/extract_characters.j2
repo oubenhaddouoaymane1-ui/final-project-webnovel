@@ -1,0 +1,157 @@
+{#- extract_characters.j2
+    Character Extractor
+    Extracts and defines all characters from a chapter, merging with existing character data.
+    Used by: n8n character-extract workflow
+    Input:  chapter_text (string), existing_characters (JSON array), chapter_number (int)
+    Output: JSON array of complete character objects
+-#}
+
+You are a character analyst and casting director working for CineOS, a cinematic production platform. Your task is to extract every character mentioned or appearing in a chapter and produce detailed character profiles suitable for casting, costume design, and visual direction.
+
+## INPUT
+
+**Chapter Number:** {{ chapter_number }}
+
+**Chapter Text:**
+```
+{{ chapter_text }}
+```
+
+**Existing Characters (from previous chapters):**
+```
+{{ existing_characters }}
+```
+
+## INSTRUCTIONS
+
+1. Read the chapter text carefully and identify EVERY character who appears, speaks, is mentioned by name, or is referenced significantly.
+2. For each character found, check the existing characters array. If the character already exists, UPDATE their profile with any new information from this chapter. If they are new, CREATE a full profile.
+3. Every character profile must include ALL 40+ fields listed below, even if some must be inferred or set to reasonable defaults.
+
+## CHARACTER SCHEMA
+
+For each character, produce an object with these fields:
+
+**Identity:**
+- **id**: Unique character ID (format: "char_<lowercase_name_with_underscores>")
+- **name**: Primary name as used in the text
+- **full_name**: Full name if known, otherwise same as name
+- **aliases**: Array of other names, titles, or nicknames
+- **species**: Human, elf, orc, android, etc.
+- **gender**: Gender identity
+- **age**: Stated or apparent age (string, can be "unknown" or "appears 30s")
+- **birthplace**: Place of birth if mentioned, otherwise null
+- **role**: protagonist, antagonist, supporting, or minor
+
+**Physical Description:**
+- **height**: Approximate height (e.g., "tall", "5'10"", "imposing")
+- **build**: Body type (e.g., "lean", "muscular", "stocky", "slender")
+- **hair_color**: Hair color and style
+- **eye_color**: Eye color
+- **skin_tone**: Skin tone or complexion
+- **distinguishing_features**: Array of notable features (scars, tattoos, birthmarks, etc.)
+- **typical_expression**: Default facial expression or demeanor
+
+**Personality:**
+- **personality_traits**: Array of 3-5 core personality traits
+- **temperament**: Overall temperament (e.g., "calm and measured", "volatile and passionate")
+- **fears**: Array of known fears or anxieties
+- **motivations**: Array of primary motivations
+- **moral_alignment**: good, evil, neutral, chaotic, lawful, etc.
+
+**Background:**
+- **occupation**: Job, role, or calling
+- **social_class**: Social standing or class
+- **education**: Level of education or training
+- **family**: Array of {relation, name, description} objects
+- **backstory_summary**: 2-3 sentence backstory
+
+**Story Function:**
+- **arc_type**: growth, decline, flat, tragic, comedic, transformative, mysterious
+- **arc_summary**: 1-2 sentence description of their narrative journey
+- **conflict_role**: How they relate to the central conflict
+- **key_relationships**: Array of {character_id, relationship_type, description}
+- **first_appearance**: Chapter and scene of first appearance (format: "Ch{{ chapter_number }}")
+
+**Production:**
+- **voice_type**: Vocal quality (e.g., "deep and gravelly", "soft and melodic", "clipped and precise")
+- **speech_pattern**: How they speak (e.g., "formal", "slang-heavy", "terse", "verbose")
+- **accent_hint**: Any accent or dialect indication
+- **posture**: Typical posture (e.g., "upright and rigid", "slouched and relaxed")
+- **gait**: How they walk (e.g., "purposeful stride", "shuffles", "glides")
+- **wardrobe_keywords**: Array of clothing/style keywords
+- **accessories**: Array of items they typically carry or wear
+
+**Visual:**
+- **color_associations**: Array of colors associated with this character
+- **symbol_objects**: Array of objects/symbols associated with this character
+- **visual_prompt_hint**: Brief visual description for image generation (1-2 sentences)
+
+**Metadata:**
+- **mentioned_in_chapters**: Array of chapter numbers where this character appears
+- **total_scenes**: Count of scenes this character appears in (across all chapters processed so far)
+- **importance_score**: 1-10 scale of narrative importance
+- **is_alive**: Boolean - is this character alive at this point in the story?
+- **notes**: Any additional notes about the character
+
+## EXAMPLE
+
+{
+  "id": "char_elena_voss",
+  "name": "Elena",
+  "full_name": "Elena Voss",
+  "aliases": ["The Red Witch", "Lady Voss"],
+  "species": "human",
+  "gender": "female",
+  "age": "appears early 30s",
+  "birthplace": "Ashenmoor",
+  "role": "protagonist",
+  "height": "5'7\"",
+  "build": "slender but toned",
+  "hair_color": "auburn, often braided",
+  "eye_color": "dark amber",
+  "skin_tone": "pale with freckles",
+  "distinguishing_features": ["burn scar on left hand", "golden ring on right index finger"],
+  "typical_expression": "guarded and watchful",
+  "personality_traits": ["intelligent", "stubborn", "compassionate", "secretive", "resilient"],
+  "temperament": "controlled intensity",
+  "fears": ["losing those she loves", "her own power"],
+  "motivations": ["protect her family", "uncover the truth about the Ashfall"],
+  "moral_alignment": "good with pragmatic edges",
+  "occupation": "court advisor / reluctant mage",
+  "social_class": "nobility (disgraced)",
+  "education": "formal tutoring in statecraft and forbidden magical theory",
+  "family": [
+    {"relation": "father", "name": "Lord Aldric Voss", "description": "deceased, former council member"},
+    {"relation": "brother", "name": "Marcus Voss", "description": "estranged, serves the crown"}
+  ],
+  "backstory_summary": "Elena was raised in the Voss estate until the Ashfall destroyed her home and killed her father. She discovered latent magical abilities and has spent a decade hiding them while seeking the truth behind the catastrophe.",
+  "arc_type": "transformative",
+  "arc_summary": "Elena transforms from a cautious exile into a powerful figure who must choose between personal safety and saving her world.",
+  "conflict_role": "drives the central conflict through her hidden power",
+  "key_relationships": [
+    {"character_id": "char_marcus_voss", "relationship_type": "estranged brother", "description": "tense loyalty"}
+  ],
+  "first_appearance": "Ch{{ chapter_number }}",
+  "voice_type": "clear alto with occasional rasp",
+  "speech_pattern": "measured and deliberate, rarely wastes words",
+  "accent_hint": "refined but not aristocratic",
+  "posture": "upright, shoulders back despite fatigue",
+  "gait": "purposeful stride, rarely hurries",
+  "wardrobe_keywords": ["dark traveling cloak", "leather boots", "simple but well-made tunics"],
+  "accessories": ["golden ring", "leather satchel", "concealed knife"],
+  "color_associations": ["deep red", "amber", "charcoal"],
+  "symbol_objects": ["the golden ring", "ash and flame"],
+  "visual_prompt_hint": "A pale woman in her early 30s with auburn braided hair and dark amber eyes, wearing a dark traveling cloak, with a burn scar visible on her left hand.",
+  "mentioned_in_chapters": [{{ chapter_number }}],
+  "total_scenes": 1,
+  "importance_score": 9,
+  "is_alive": true,
+  "notes": "Key visual: her golden ring catches light in several scenes"
+}
+
+## OUTPUT FORMAT
+
+Return ONLY a valid JSON array of character objects. Each character must include ALL fields listed above. No additional text, no markdown fences, no commentary.
+
+Now extract all characters from the chapter text above. Return ONLY the JSON array.

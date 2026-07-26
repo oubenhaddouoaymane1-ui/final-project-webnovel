@@ -1,0 +1,465 @@
+{
+  "name": "014 - Prompt Builder",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "prompt/build",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-014",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [220, 300],
+      "webhookId": "prompt-builder-014"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id AS project_id, p.title, p.language, s.id AS scene_id, s.scene_number, s.emotional_tone, s.emotion_cinematography, ch.id AS shot_id, ch.shot_number, ch.shot_type, ch.duration_seconds, ch.description, ch.camera_movement, ch.characters_in_shot, ch.fight_type, ch.fight_intensity, ch.action_description, ch.speed_ramp, ch.camera_angle_override FROM projects p JOIN scenes s ON p.id = s.project_id JOIN shots ch ON s.id = ch.scene_id WHERE p.id = $1 AND p.state IN ('shot_planned', 'fight_choreographed', 'emotion_directed') AND ch.state = 'planned' ORDER BY s.scene_number, ch.shot_number",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-shots-014",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [440, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-has-shots-014",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-validate-014",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [660, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT b.bible_type, b.content FROM bibles b WHERE b.project_id = $1 AND b.locked = true",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.body.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-load-bibles-014",
+      "name": "Load Bibles",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [880, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const shotRows = $input.first().json.rows;\nconst projectId = shotRows[0].project_id;\nconst bibleRows = $('Load Project').item.json.rows ? [] : [];\n\nlet bibles = {};\ntry {\n  const bRows = $('Load Bibles').item.json.rows || [];\n  for (const b of bRows) {\n    bibles[b.bible_type] = b.content;\n  }\n} catch (e) {\n  bibles = {};\n}\n\nconst shots = shotRows.map(row => ({\n  shot_id: row.shot_id,\n  shot_number: row.shot_number,\n  scene_id: row.scene_id,\n  shot_type: row.shot_type,\n  duration_seconds: row.duration_seconds,\n  description: row.description,\n  camera_movement: row.camera_movement,\n  characters_in_shot: JSON.parse(row.characters_in_shot || '[]'),\n  emotional_tone: row.emotional_tone,\n  fight_type: row.fight_type,\n  action_description: row.action_description,\n  speed_ramp: row.speed_ramp,\n  camera_angle_override: row.camera_angle_override\n}));\n\nconst batchSize = 10;\nconst batches = [];\nfor (let i = 0; i < shots.length; i += batchSize) {\n  batches.push(shots.slice(i, i + batchSize));\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    title: shotRows[0].title,\n    language: shotRows[0].language,\n    shots: shots,\n    bibles: bibles,\n    total_shots: shots.length,\n    batches: batches,\n    total_batches: batches.length\n  }\n}];"
+      },
+      "id": "code-prepare-014",
+      "name": "Execute Logic",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.OLLAMA_URL || 'http://localhost:11434' }}/api/generate",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"{{ $env.OLLAMA_MODEL || 'llama3' }}\",\n  \"prompt\": \"You are a prompt engineer for AI image generation. Compose detailed positive and negative prompts for each shot.\\n\\nProject: '{{ $('Execute Logic').item.json.title }}'\\nBibles: {{ JSON.stringify($('Execute Logic').item.json.bibles) }}\\n\\nShots batch: {{ JSON.stringify($('Execute Logic').item.json.batches[0]) }}\\n\\nFor each shot, generate:\\n1. positive_prompt: detailed image generation prompt (max 300 tokens)\\n2. negative_prompt: things to avoid\\n3. style_keywords: array of style keywords\\n4. aspect_ratio: {16:9, 9:16, 1:1, 4:3, 21:9}\\n5. quality_tier: {standard, high, ultra}\\n6. seed_suggestion: null (random)\\n7. prompt_version: incrementing version number\\n\\nEnsure prompts are consistent with bibles and cinematic style.\\nReturn as JSON array with shot_id as key.\",\n  \"stream\": false,\n  \"format\": \"json\"\n}",
+        "options": {
+          "timeout": 180000
+        }
+      },
+      "id": "http-llm-prompts-014",
+      "name": "Execute Logic (LLM)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1320, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const responseText = $input.first().json.response || '{}';\nlet promptData = [];\n\ntry {\n  const jsonMatch = responseText.match(/\\[[\\s\\S]*\\]/);\n  if (jsonMatch) {\n    promptData = JSON.parse(jsonMatch[0]);\n  } else {\n    const objMatch = responseText.match(/\\{[\\s\\S]*\\}/);\n    if (objMatch) {\n      const parsed = JSON.parse(objMatch[0]);\n      promptData = Object.entries(parsed).map(([key, val]) => ({ shot_id: key, ...val }));\n    }\n  }\n} catch (e) {\n  promptData = [];\n}\n\nconst projectId = $('Execute Logic').item.json.project_id;\nconst shots = $('Execute Logic').item.json.shots;\n\nconst promptInserts = [];\nlet totalPrompts = 0;\n\nfor (const pd of promptData) {\n  totalPrompts++;\n  promptInserts.push({\n    json: {\n      shot_id: pd.shot_id,\n      project_id: projectId,\n      positive_prompt: pd.positive_prompt || '',\n      negative_prompt: pd.negative_prompt || '',\n      style_keywords: JSON.stringify(pd.style_keywords || []),\n      aspect_ratio: pd.aspect_ratio || '16:9',\n      quality_tier: pd.quality_tier || 'standard',\n      seed_suggestion: pd.seed_suggestion || null,\n      prompt_version: pd.prompt_version || 1\n    }\n  });\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    prompt_inserts: promptInserts,\n    total_prompts: totalPrompts\n  }\n}];"
+      },
+      "id": "code-process-prompts-014",
+      "name": "Execute Logic (Prompts)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1540, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO prompts (shot_id, project_id, positive_prompt, negative_prompt, style_keywords, aspect_ratio, quality_tier, seed_suggestion, prompt_version, created_at) VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $8, $9, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $json.shot_id }}"
+              },
+              {
+                "value": "={{ $json.project_id }}"
+              },
+              {
+                "value": "={{ $json.positive_prompt }}"
+              },
+              {
+                "value": "={{ $json.negative_prompt }}"
+              },
+              {
+                "value": "={{ $json.style_keywords }}"
+              },
+              {
+                "value": "={{ $json.aspect_ratio }}"
+              },
+              {
+                "value": "={{ $json.quality_tier }}"
+              },
+              {
+                "value": "={{ $json.seed_suggestion }}"
+              },
+              {
+                "value": "={{ $json.prompt_version }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-store-prompts-014",
+      "name": "Store Prompts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1760, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      },
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'prompted', updated_at = NOW() WHERE id = $1",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Prompts)').item.json.project_id }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-update-state-014",
+      "name": "Update Database",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1980, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO events (project_id, event_type, payload, created_at) VALUES ($1, 'prompts_built', $2::jsonb, NOW())",
+        "additionalFields": {
+          "queryValues": {
+            "values": [
+              {
+                "value": "={{ $('Execute Logic (Prompts)').item.json.project_id }}"
+              },
+              {
+                "value": "={{ JSON.stringify({ state: 'prompted', total_prompts: $('Execute Logic (Prompts)').item.json.total_prompts }) }}"
+              }
+            ]
+          }
+        }
+      },
+      "id": "pg-event-014",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2200, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.body.chat_id }}",
+        "text": "=📝 Prompt building complete!\n\n📋 Project: {{ $('Execute Logic (Prompts)').item.json.project_id }}\n✨ Total prompts: {{ $('Execute Logic (Prompts)').item.json.total_prompts }}\n🔄 State transitioned to 'queued'"
+      },
+      "id": "tg-014",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2420, 300],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.N8N_BASE_URL || 'http://localhost:5678' }}/webhook/trigger-orchestrator",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $('Execute Logic (Prompts)').item.json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "prompted"
+            },
+            {
+              "name": "current_state",
+              "value": "shot_planned"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "http-orch-014",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2640, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'prompted', project_id: $('Execute Logic (Prompts)').item.json.project_id, total_prompts: $('Execute Logic (Prompts)').item.json.total_prompts }) }}"
+      },
+      "id": "respond-014",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2860, 300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ JSON.stringify({ status: 'error', message: 'No shots found for prompt building' }) }}",
+        "options": {
+          "responseCode": 404
+        }
+      },
+      "id": "respond-err-014",
+      "name": "Respond (Error)",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 480]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Load Project",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          {
+            "node": "Validate State",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          {
+            "node": "Load Bibles",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond (Error)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Bibles": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (LLM)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (LLM)": {
+      "main": [
+        [
+          {
+            "node": "Execute Logic (Prompts)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Execute Logic (Prompts)": {
+      "main": [
+        [
+          {
+            "node": "Store Prompts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Prompts": {
+      "main": [
+        [
+          {
+            "node": "Update Database",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Database": {
+      "main": [
+        [
+          {
+            "node": "Emit Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          {
+            "node": "Send Progress",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          {
+            "node": "Trigger Orchestrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "tags": [
+    {
+      "name": "cineos",
+      "id": "cineos-tag"
+    }
+  ],
+  "triggerCount": 1
+}

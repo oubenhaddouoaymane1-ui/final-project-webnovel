@@ -1,0 +1,515 @@
+{
+  "name": "025 - Final Review",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "final-review",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id as project_id, p.title, p.final_video_url, p.final_video_duration, p.state, r.id as review_id, r.review_type, r.score, r.feedback, r.checks, r.created_at as review_date FROM projects p LEFT JOIN reviews r ON r.project_id = p.id WHERE p.id = $1 AND p.state = 'final_review'",
+        "additionalFields": {}
+      },
+      "id": "load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-data",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-state",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\nconst videoUrl = rows[0].final_video_url;\n\nconst reviews = rows.filter(r => r.review_id).map(r => ({\n  type: r.review_type,\n  score: r.score,\n  feedback: r.feedback,\n  checks: r.checks,\n  date: r.review_date\n}));\n\nconst avgScore = reviews.length > 0 ? reviews.reduce((sum, r) => sum + (r.score || 0), 0) / reviews.length : 0;\n\nreturn [{\n  json: {\n    project_id: projectId,\n    video_url: videoUrl,\n    reviews: reviews,\n    avg_review_score: avgScore,\n    total_reviews: reviews.length\n  }\n}];"
+      },
+      "id": "load-final-video",
+      "name": "Load Final Video and Reviews",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/review/character-consistency",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "video_url",
+              "value": "={{ $json.video_url }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "check-character",
+      "name": "Check Character Consistency",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 180]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/review/world-consistency",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "video_url",
+              "value": "={{ $json.video_url }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "check-world",
+      "name": "Check World Consistency",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/review/narrative-fidelity",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "video_url",
+              "value": "={{ $json.video_url }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "check-narrative",
+      "name": "Check Narrative Fidelity",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 420]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/review/audio-video-sync",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "video_url",
+              "value": "={{ $json.video_url }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "check-sync",
+      "name": "Check Audio-Video Sync",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 540]
+    },
+    {
+      "parameters": {
+        "jsCode": "const reviews = $input.all().map(input => input.json);\n\nconst projectId = reviews[0]?.project_id || $('Load Final Video and Reviews').first().json.project_id;\n\nconst scores = {\n  character_consistency: reviews.find(r => r.check_type === 'character_consistency')?.score || 0,\n  world_consistency: reviews.find(r => r.check_type === 'world_consistency')?.score || 0,\n  narrative_fidelity: reviews.find(r => r.check_type === 'narrative_fidelity')?.score || 0,\n  audio_video_sync: reviews.find(r => r.check_type === 'audio_video_sync')?.score || 0\n};\n\nconst weights = {\n  character_consistency: 0.25,\n  world_consistency: 0.25,\n  narrative_fidelity: 0.30,\n  audio_video_sync: 0.20\n};\n\nconst overallScore = Object.keys(scores).reduce((sum, key) => {\n  return sum + (scores[key] * weights[key]);\n}, 0);\n\nconst issues = reviews.filter(r => r.score < 0.7).map(r => ({\n  type: r.check_type,\n  score: r.score,\n  issues: r.issues || []\n}));\n\nlet decision;\nif (overallScore >= 0.8) {\n  decision = 'pass';\n} else if (overallScore >= 0.5 && issues.length <= 2) {\n  decision = 'repair';\n} else {\n  decision = 'fail';\n}\n\nreturn [{\n  json: {\n    project_id: projectId,\n    scores: scores,\n    overall_score: overallScore,\n    decision: decision,\n    issues: issues,\n    total_issues: issues.length\n  }\n}];"
+      },
+      "id": "calculate-score",
+      "name": "Calculate Overall Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1400, 360]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "make-decision",
+              "leftValue": "={{ $json.decision }}",
+              "rightValue": "pass",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-decision",
+      "name": "Decision?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1620, 360]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'approved', overall_score = $2, updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'approved', 'at', NOW(), 'details', 'Final review passed') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-pass",
+      "name": "Transition to Approved",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1840, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'repair', repair_issues = $2, updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'repair', 'at', NOW(), 'details', 'Issues detected, sending for repair') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-repair",
+      "name": "Transition to Repair",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1840, 360],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'failed', overall_score = $2, failure_reason = 'Final review failed', updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'failed', 'at', NOW(), 'details', 'Failed final review') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-fail",
+      "name": "Transition to Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1840, 480],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_events (project_id, event_type, payload, created_at) VALUES ($1, 'final_review_completed', jsonb_build_object('decision', $2, 'overall_score', $3, 'issues', $4::jsonb), NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2060, 360],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "✅ Final Review Complete\n\nProject: {{ $json.project_id }}\nDecision: {{ $json.decision }}\nOverall Score: {{ ($json.overall_score * 100).toFixed(1) }}%\nIssues: {{ $json.total_issues }}\n\nState: {{ $json.decision === 'pass' ? 'approved' : $json.decision }}",
+        "additionalFields": {}
+      },
+      "id": "send-progress",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2280, 360],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_URL }}/trigger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "={{ $json.decision === 'pass' ? 'approved' : $json.decision }}"
+            },
+            {
+              "name": "triggered_by",
+              "value": "final_review"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2500, 360]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"final_review\", \"project_id\": $json.project_id, \"decision\": $json.decision, \"overall_score\": $json.overall_score } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2720, 360]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: 'No project data found or project not in final_review state', project_id: $('Webhook Trigger').first().json.body?.project_id } }];"
+      },
+      "id": "handle-no-data",
+      "name": "Handle No Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 480]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 480]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Load Project", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          { "node": "Validate State", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          { "node": "Load Final Video and Reviews", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle No Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Final Video and Reviews": {
+      "main": [
+        [
+          { "node": "Check Character Consistency", "type": "main", "index": 0 },
+          { "node": "Check World Consistency", "type": "main", "index": 0 },
+          { "node": "Check Narrative Fidelity", "type": "main", "index": 0 },
+          { "node": "Check Audio-Video Sync", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Character Consistency": {
+      "main": [
+        [
+          { "node": "Calculate Overall Score", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check World Consistency": {
+      "main": [
+        [
+          { "node": "Calculate Overall Score", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Narrative Fidelity": {
+      "main": [
+        [
+          { "node": "Calculate Overall Score", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check Audio-Video Sync": {
+      "main": [
+        [
+          { "node": "Calculate Overall Score", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Calculate Overall Score": {
+      "main": [
+        [
+          { "node": "Decision?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Decision?": {
+      "main": [
+        [
+          { "node": "Transition to Approved", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Transition to Repair", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Approved": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Repair": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Failed": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          { "node": "Send Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          { "node": "Trigger Orchestrator", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle No Data": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "review" },
+    { "name": "production" }
+  ]
+}

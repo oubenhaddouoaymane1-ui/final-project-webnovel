@@ -1,0 +1,140 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# CineOS — Worker Configuration (Cloud-First)
+# Local PC runs ONLY lightweight services.
+# ALL heavy AI workloads are dispatched to free cloud services via HTTP.
+# NO torch, NO diffusers, NO local GPU on your machine.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+supervisor:
+  host: "0.0.0.0"
+  port: 9000
+  heartbeat_interval_seconds: 30
+  max_worker_idle_seconds: 300
+  health_check_interval_seconds: 60
+
+# ── Local Workers (run on your PC — lightweight, CPU only) ──────────────────
+local_workers:
+  render:
+    enabled: true
+    count: 1
+    max_concurrent: 2
+    task_types: ["video_render", "clip_assembly"]
+    timeout_seconds: 600
+    retry_max: 2
+    description: "FFmpeg video assembly — runs locally, CPU only"
+    max_ram_mb: 2048
+
+  voice_edge_tts:
+    enabled: true
+    count: 2
+    max_concurrent: 4
+    task_types: ["tts_generation"]
+    timeout_seconds: 120
+    retry_max: 2
+    description: "Edge TTS via Microsoft API — free, no GPU, runs locally"
+    max_ram_mb: 512
+
+  animation_local:
+    enabled: true
+    count: 1
+    max_concurrent: 2
+    task_types: ["image_animation"]
+    timeout_seconds: 300
+    retry_max: 2
+    description: "FFmpeg Ken Burns effect — runs locally, CPU only"
+    max_ram_mb: 1024
+
+  text_analysis:
+    enabled: true
+    count: 2
+    max_concurrent: 4
+    task_types: ["text_analysis", "story_parsing", "character_extraction"]
+    timeout_seconds: 180
+    retry_max: 3
+    description: "LLM calls via OpenRouter API — lightweight HTTP, no local GPU"
+    max_ram_mb: 256
+
+# ── Cloud Workers (dispatched to free cloud services) ──────────────────────
+cloud_workers:
+  image_generation:
+    enabled: true
+    primary: "pollinations"
+    backends:
+      pollinations:
+        enabled: true
+        url: "https://image.pollinations.ai/prompt"
+        description: "Free image generation — no API key, no GPU"
+        timeout_seconds: 120
+        retry_max: 3
+        rate_limit_per_minute: 10
+      colab_comfyui:
+        enabled: false
+        url: "${COLAB_COMFYUI_ENDPOINT:-}"
+        description: "Google Colab running ComfyUI + FLUX — start Colab when needed"
+        timeout_seconds: 300
+        retry_max: 2
+        warm_up_url: "${COLAB_WARMUP_URL:-}"
+        auto_shutdown_minutes: 15
+      hf_inference:
+        enabled: false
+        url: "https://api-inference.huggingface.co/models"
+        api_key: "${HF_API_KEY:-}"
+        description: "HuggingFace Inference API — free tier available"
+        timeout_seconds: 180
+        retry_max: 2
+
+  quality_review:
+    enabled: true
+    primary: "openrouter_vision"
+    backends:
+      openrouter_vision:
+        enabled: true
+        url: "https://openrouter.ai/api/v1/chat/completions"
+        api_key: "${OPENROUTER_API_KEY:-}"
+        model: "google/gemini-flash-1.5"
+        description: "Vision QA via OpenRouter — Gemini Flash is free"
+        timeout_seconds: 60
+        retry_max: 2
+
+  super_resolution:
+    enabled: false
+    primary: "colab_esrgan"
+    backends:
+      colab_esrgan:
+        enabled: false
+        url: "${COLAB_ESRGAN_ENDPOINT:-}"
+        description: "RealESRGAN on Google Colab — start Colab when needed"
+        timeout_seconds: 180
+        retry_max: 2
+
+  animation_cloud:
+    enabled: false
+    primary: "colab_liveportrait"
+    backends:
+      colab_liveportrait:
+        enabled: false
+        url: "${COLAB_LIVEPORTRAIT_ENDPOINT:-}"
+        description: "LivePortrait on Google Colab — optional, higher quality"
+        timeout_seconds: 300
+        retry_max: 2
+
+  voice_cloud:
+    enabled: false
+    primary: "colab_kokoro"
+    backends:
+      colab_kokoro:
+        enabled: false
+        url: "${COLAB_KOKORO_ENDPOINT:-}"
+        description: "Kokoro TTS on Google Colab — optional, higher quality"
+        timeout_seconds: 120
+        retry_max: 2
+
+# ── Job Queue ──────────────────────────────────────────────────────────────
+job_queue:
+  max_queue_size: 1000
+  priority_levels: 10
+  default_priority: 5
+  stale_job_timeout_seconds: 600
+  cleanup_interval_seconds: 300
+  cloud_poll_interval_seconds: 10
+  cloud_callback_timeout_seconds: 30

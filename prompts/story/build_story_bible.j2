@@ -1,0 +1,117 @@
+{#- build_story_bible.j2
+    Story Bible Builder
+    Synthesizes intelligence analysis and chapter data into a complete, production-ready Story Bible.
+    Used by: n8n story-bible workflow
+    Input:  intelligence_analysis (JSON), chapters_summary (JSON), book_title (string), author (string)
+    Output: Complete Story Bible JSON
+-#}
+
+You are a story bible architect working for CineOS, a cinematic production platform. Your task is to synthesize story intelligence and chapter data into a complete, authoritative Story Bible that will serve as the single source of truth for all cinematic production teams.
+
+## INPUT
+
+**Book Title:** {{ book_title }}
+**Author:** {{ author }}
+
+**Story Intelligence Analysis:**
+```
+{{ intelligence_analysis }}
+```
+
+**Chapters Summary:**
+```
+{{ chapters_summary }}
+```
+
+## INSTRUCTIONS
+
+Using the intelligence analysis and chapter summaries above, construct a comprehensive Story Bible. This document must be authoritative, internally consistent, and detailed enough to guide every production department (art, costume, VFX, direction, acting, editing).
+
+The Story Bible must contain ALL of the following sections:
+
+### 1. metadata
+- **title**: Book title
+- **author**: Author name
+- **genre**: Primary genre
+- **subgenres**: Array of subgenres
+- **tone**: Overall tone description
+- **target_audience**: Intended audience (e.g., "adult", "young adult", "all ages")
+- **content_rating**: Production rating (e.g., "PG-13", "R", "TV-14")
+- **estimated_runtime_minutes**: Total estimated screen runtime
+
+### 2. synopsis
+- **logline**: One sentence summary of the story
+- **short_synopsis**: 2-3 sentence synopsis
+- **full_synopsis**: 5-8 sentence detailed synopsis covering the complete arc
+
+### 3. themes
+Array of theme objects:
+- **theme**: Theme name
+- **description**: How this theme manifests in the story
+- **key_scenes**: Array of scene references where this theme is most prominent
+
+### 4. narrative_structure
+- **structure_type**: linear, non_linear, episodic, frame_narrative, parallel
+- **pov**: Point of view (first_person, third_limited, third_omniscient, multiple)
+- **timeline**: Description of the story's timeline (linear, branching, etc.)
+- **act_breakdown**: Array of act objects with act number, title, description, and key_events
+
+### 5. world_overview
+- **name**: Name of the world or setting
+- **era**: Time period or era
+- **technology_level**: Description of technology
+- **magic_system**: Description if applicable, otherwise null
+- **geography**: Brief geographic overview
+- **politics**: Political structure overview
+- **culture_overview**: Brief cultural overview
+- **key_locations**: Array of important locations (name, description, significance)
+
+### 6. characters_summary
+Array of character objects (include ALL named characters):
+- **name**: Character name
+- **full_name**: Full name if known
+- **role**: protagonist, antagonist, supporting, or minor
+- **species**: Human, elf, robot, etc.
+- **age**: Age or apparent age
+- **gender**: Gender identity
+- **description**: Physical appearance (2-3 sentences)
+- **personality_summary**: Personality in 1-2 sentences
+- **arc_summary**: Their journey in 1-2 sentences
+- **relationships**: Array of {character, relationship, description}
+
+### 7. scene_breakdown
+Array of scene objects from the parsed story:
+- **scene_id**: Unique scene identifier (e.g., "S01E01_SC001")
+- **chapter**: Chapter number
+- **scene_index**: Scene index within chapter
+- **summary**: Scene summary
+- **location**: Location
+- **time_of_day**: Time of day
+- **characters_present**: Array of character names
+- **emotions**: Array of emotions
+- **pacing**: Pacing descriptor
+- **importance**: Importance level
+- **estimated_duration_seconds**: Estimated screen time
+
+### 8. visual_style_guide
+- **color_palette**: Array of 5-7 dominant colors with hex codes and descriptions
+- **lighting_style**: General lighting approach
+- **camera_style**: General camera approach (handheld, steady, etc.)
+- **influences**: Array of visual references (films, art movements, etc.)
+
+### 9. audio_style
+- **music_style**: Musical style and genre
+- **sound_design**: Sound design approach
+- **silence_use**: How silence is used
+
+### 10. production_notes
+- **key_challenges**: Array of production challenges to anticipate
+- **vfx_heavy_scenes**: Array of scenes requiring significant VFX
+- **practical_effects**: Array of scenes suited for practical effects
+- **continuity_notes**: Array of important continuity details to track
+
+## OUTPUT FORMAT
+
+Return ONLY a valid JSON object matching the schema described above. No additional text, no markdown fences, no commentary. Every field must be populated - use null only where explicitly noted as optional.
+
+Now build the Story Bible from the provided intelligence analysis and chapter summaries. Return ONLY the JSON object.

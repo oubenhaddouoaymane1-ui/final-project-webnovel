@@ -1,0 +1,364 @@
+{
+  "name": "027 - Learning Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "learning-engine",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id as project_id, p.title, p.state, p.overall_score, p.created_at, p.updated_at, p.error_log, p.state_history, EXTRACT(EPOCH FROM (p.updated_at - p.created_at)) as total_duration_seconds, r.id as review_id, r.review_type, r.score as review_score, r.feedback, pc.id as prompt_id, pc.prompt_text, pc.response, pc.tokens_used, pc.latency_ms, pc.backend FROM projects p LEFT JOIN reviews r ON r.project_id = p.id LEFT JOIN prompt_calls pc ON pc.project_id = p.id WHERE p.id = $1",
+        "additionalFields": {}
+      },
+      "id": "load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-data",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-state",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.first().json.rows;\nconst projectId = rows[0].project_id;\n\nconst performanceMetrics = {\n  project_id: projectId,\n  total_duration_seconds: rows[0].total_duration_seconds,\n  overall_score: rows[0].overall_score,\n  state_history: rows[0].state_history,\n  error_log: rows[0].error_log,\n  state: rows[0].state,\n  reviews: rows.filter(r => r.review_id).map(r => ({\n    type: r.review_type,\n    score: r.review_score,\n    feedback: r.feedback\n  })),\n  prompt_calls: rows.filter(r => r.prompt_id).map(r => ({\n    prompt_text: r.prompt_text,\n    response: r.response,\n    tokens_used: r.tokens_used,\n    latency_ms: r.latency_ms,\n    backend: r.backend\n  }))\n};\n\nreturn [{ json: { project_id: projectId, performance: performanceMetrics } }];"
+      },
+      "id": "analyze-performance",
+      "name": "Analyze Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst perf = input.performance;\nconst promptCalls = perf.prompt_calls || [];\n\nconst promptAnalysis = promptCalls.map(call => {\n  const avgTokens = promptCalls.reduce((sum, c) => sum + (c.tokens_used || 0), 0) / promptCalls.length;\n  const avgLatency = promptCalls.reduce((sum, c) => sum + (c.latency_ms || 0), 0) / promptCalls.length;\n  \n  return {\n    prompt_preview: call.prompt_text?.substring(0, 100),\n    tokens_used: call.tokens_used,\n    latency_ms: call.latency_ms,\n    backend: call.backend,\n    efficiency: call.tokens_used > 0 ? (1000 / call.tokens_used) : 0,\n    response_quality: call.response ? 'received' : 'missing'\n  };\n});\n\nconst backendStats = {};\npromptCalls.forEach(call => {\n  if (!backendStats[call.backend]) {\n    backendStats[call.backend] = { count: 0, total_tokens: 0, total_latency: 0 };\n  }\n  backendStats[call.backend].count++;\n  backendStats[call.backend].total_tokens += call.tokens_used || 0;\n  backendStats[call.backend].total_latency += call.latency_ms || 0;\n});\n\nObject.keys(backendStats).forEach(backend => {\n  backendStats[backend].avg_tokens = backendStats[backend].total_tokens / backendStats[backend].count;\n  backendStats[backend].avg_latency = backendStats[backend].total_latency / backendStats[backend].count;\n});\n\nreturn [{ json: { ...input, prompt_analysis: promptAnalysis, backend_stats: backendStats } }];"
+      },
+      "id": "analyze-prompts",
+      "name": "Analyze Prompt Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst backendStats = input.backend_stats;\n\nconst backendAnalysis = Object.keys(backendStats).map(backend => {\n  const stats = backendStats[backend];\n  const isEfficient = stats.avg_tokens < 2000 && stats.avg_latency < 5000;\n  const isReliable = stats.count > 0;\n  \n  return {\n    backend: backend,\n    call_count: stats.count,\n    avg_tokens: Math.round(stats.avg_tokens),\n    avg_latency: Math.round(stats.avg_latency),\n    efficiency_rating: isEfficient ? 'high' : 'low',\n    reliability_rating: isReliable ? 'reliable' : 'unreliable',\n    recommendation: isEfficient && isReliable ? 'keep' : 'consider_alternative'\n  };\n});\n\nreturn [{ json: { ...input, backend_analysis: backendAnalysis } }];"
+      },
+      "id": "analyze-backends",
+      "name": "Analyze Backend Performance",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1300, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst perf = input.performance;\n\nconst lessons = [];\n\nif (perf.overall_score >= 0.9) {\n  lessons.push({ type: 'success', lesson: 'High quality output achieved', category: 'quality' });\n} else if (perf.overall_score < 0.6) {\n  lessons.push({ type: 'improvement', lesson: 'Output quality below threshold, review prompts and parameters', category: 'quality' });\n}\n\nif (perf.total_duration_seconds > 3600) {\n  lessons.push({ type: 'improvement', lesson: 'Project took over 1 hour, consider parallelization', category: 'performance' });\n}\n\nif (perf.error_log && Object.keys(perf.error_log).length > 0) {\n  lessons.push({ type: 'error', lesson: 'Errors occurred during processing', category: 'reliability', details: perf.error_log });\n}\n\ninput.prompt_analysis.forEach(pa => {\n  if (pa.efficiency < 0.5) {\n    lessons.push({ type: 'improvement', lesson: `Low prompt efficiency: ${pa.prompt_preview}...`, category: 'prompt_optimization' });\n  }\n});\n\ninput.backend_analysis.forEach(ba => {\n  if (ba.recommendation === 'consider_alternative') {\n    lessons.push({ type: 'optimization', lesson: `Backend ${ba.backend} performing suboptimally`, category: 'backend' });\n  }\n});\n\nreturn [{ json: { ...input, lessons: lessons, total_lessons: lessons.length } }];"
+      },
+      "id": "extract-lessons",
+      "name": "Extract Lessons",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1520, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nconst tuningRecommendations = [];\n\nif (input.backend_analysis.some(b => b.avg_latency > 10000)) {\n  tuningRecommendations.push({\n    parameter: 'timeout_threshold',\n    current_value: 30000,\n    recommended_value: 60000,\n    reason: 'Backend latency exceeding timeout'\n  });\n}\n\nif (input.lessons.some(l => l.category === 'quality' && l.type === 'improvement')) {\n  tuningRecommendations.push({\n    parameter: 'min_quality_score',\n    current_value: 0.7,\n    recommended_value: 0.8,\n    reason: 'Quality issues detected, raising threshold'\n  });\n}\n\nif (input.performance.total_duration_seconds > 7200) {\n  tuningRecommendations.push({\n    parameter: 'max_project_duration',\n    current_value: 7200,\n    recommended_value: 3600,\n    reason: 'Projects taking too long, tightening deadline'\n  });\n}\n\nreturn [{ json: { ...input, tuning_recommendations: tuningRecommendations } }];"
+      },
+      "id": "tune-thresholds",
+      "name": "Tune Thresholds",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1740, 240]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO learning_data (project_id, performance_metrics, prompt_analysis, backend_analysis, lessons, tuning_recommendations, created_at) VALUES ($1, $2::jsonb, $3::jsonb, $4::jsonb, $5::jsonb, $6::jsonb, NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "store-learning",
+      "name": "Store Learning Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1960, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'learned', updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'learned', 'at', NOW(), 'details', 'Learning analysis completed') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-state",
+      "name": "Transition to Learned",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2180, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_events (project_id, event_type, payload, created_at) VALUES ($1, 'learning_completed', jsonb_build_object('lessons_extracted', $2, 'tuning_recommendations', $3), NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2400, 240],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "🧠 Learning Engine Complete\n\nProject: {{ $json.project_id }}\nLessons extracted: {{ $json.lessons_extracted }}\nTuning recommendations: {{ $json.tuning_recommendations }}\n\nState: learned",
+        "additionalFields": {}
+      },
+      "id": "send-progress",
+      "name": "Send Progress",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2620, 240],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_URL }}/trigger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "learned"
+            },
+            {
+              "name": "triggered_by",
+              "value": "learning_engine"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2840, 240]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"learning_engine\", \"project_id\": $json.project_id, \"state\": \"learned\" } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3060, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: 'No project data found', project_id: $('Webhook Trigger').first().json.body?.project_id } }];"
+      },
+      "id": "handle-no-data",
+      "name": "Handle No Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Load Project", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          { "node": "Validate State", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          { "node": "Analyze Performance", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle No Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Analyze Performance": {
+      "main": [
+        [
+          { "node": "Analyze Prompt Performance", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Analyze Prompt Performance": {
+      "main": [
+        [
+          { "node": "Analyze Backend Performance", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Analyze Backend Performance": {
+      "main": [
+        [
+          { "node": "Extract Lessons", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Extract Lessons": {
+      "main": [
+        [
+          { "node": "Tune Thresholds", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Tune Thresholds": {
+      "main": [
+        [
+          { "node": "Store Learning Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Store Learning Data": {
+      "main": [
+        [
+          { "node": "Transition to Learned", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Learned": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          { "node": "Send Progress", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Progress": {
+      "main": [
+        [
+          { "node": "Trigger Orchestrator", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle No Data": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "learning" },
+    { "name": "production" }
+  ]
+}

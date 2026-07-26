@@ -1,0 +1,412 @@
+{
+  "name": "026 - Delivery",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "delivery",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [200, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.id as project_id, p.title, p.final_video_url, p.final_video_duration, p.overall_score, p.target_audience, p.genre, p.mood, p.state, tg.chat_id FROM projects p LEFT JOIN telegram_chats tg ON tg.project_id = p.id WHERE p.id = $1 AND p.state = 'approved'",
+        "additionalFields": {}
+      },
+      "id": "load-project",
+      "name": "Load Project",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [420, 300],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "validate-data",
+              "leftValue": "={{ $json.rows.length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-state",
+      "name": "Validate State",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [640, 300]
+    },
+    {
+      "parameters": {
+        "method": "HEAD",
+        "url": "={{ $json.rows[0].final_video_url }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "check-file-size",
+      "name": "Check File Size",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [860, 240]
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $('Load Project').first().json.rows;\nconst project = rows[0];\nconst contentLength = $input.first().json.headers?.['content-length'] || 0;\nconst fileSizeMB = (parseInt(contentLength) / (1024 * 1024)).toFixed(2);\nconst maxTelegramSizeMB = 50;\nconst needsCompression = parseFloat(fileSizeMB) > maxTelegramSizeMB;\n\nreturn [{\n  json: {\n    project_id: project.project_id,\n    title: project.title,\n    video_url: project.final_video_url,\n    duration: project.final_video_duration,\n    score: project.overall_score,\n    genre: project.genre,\n    mood: project.mood,\n    target_audience: project.target_audience,\n    file_size_mb: fileSizeMB,\n    needs_compression: needsCompression,\n    chat_id: project.chat_id\n  }\n}];"
+      },
+      "id": "process-file-info",
+      "name": "Process File Info",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 240]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-compress",
+              "leftValue": "={{ $json.needs_compression }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "check-compression",
+      "name": "Needs Compression?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1300, 240]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.WORKER_URL }}/delivery/compress",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "video_url",
+              "value": "={{ $json.video_url }}"
+            },
+            {
+              "name": "target_size_mb",
+              "value": "45"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "compress-video",
+      "name": "Compress Video",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1520, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst compressedUrl = input.compressed_video_url || input.video_url;\n\nconst report = {\n  project_id: input.project_id,\n  title: input.title,\n  genre: input.genre,\n  mood: input.mood,\n  target_audience: input.target_audience,\n  duration: input.duration + 's',\n  quality_score: (input.score * 100).toFixed(1) + '%',\n  file_size: input.file_size_mb + 'MB',\n  compressed: input.needs_compression,\n  video_url: compressedUrl\n};\n\nreturn [{ json: { ...input, video_url: compressedUrl, report: report } }];"
+      },
+      "id": "build-delivery-report",
+      "name": "Build Delivery Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1740, 240]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "🎬 {{ $json.title }}\n\nGenre: {{ $json.genre }} | Mood: {{ $json.mood }}\nDuration: {{ $json.duration }}s | Score: {{ ($json.score * 100).toFixed(1) }}%\n\nYour video is ready! 🎉",
+        "additionalFields": {
+          "parse_mode": "Markdown"
+        }
+      },
+      "id": "send-video",
+      "name": "Send Video via Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [1960, 180],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "📊 Quality Report\n\nProject: {{ $json.title }}\nQuality Score: {{ ($json.score * 100).toFixed(1) }}%\nFile Size: {{ $json.file_size_mb }}MB\nDuration: {{ $json.duration }}s\n\nWorkflow completed successfully.",
+        "additionalFields": {}
+      },
+      "id": "send-report",
+      "name": "Send Quality Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [2180, 180],
+      "credentials": {
+        "telegramApi": {
+          "id": "cineos-telegram",
+          "name": "CineOS Telegram"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE projects SET state = 'delivered', delivered_at = NOW(), updated_at = NOW(), state_history = state_history || jsonb_build_object('state', 'delivered', 'at', NOW(), 'details', 'Video delivered to Telegram') WHERE id = $1 RETURNING id, state",
+        "additionalFields": {}
+      },
+      "id": "transition-state",
+      "name": "Transition to Delivered",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2400, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO project_events (project_id, event_type, payload, created_at) VALUES ($1, 'delivery_completed', jsonb_build_object('file_size_mb', $2, 'compressed', $3, 'delivered_at', NOW()), NOW()) RETURNING id",
+        "additionalFields": {}
+      },
+      "id": "emit-event",
+      "name": "Emit Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2620, 180],
+      "credentials": {
+        "postgres": {
+          "id": "cineos-db",
+          "name": "CineOS PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ORCHESTRATOR_URL }}/trigger",
+        "sendBody": true,
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "project_id",
+              "value": "={{ $json.project_id }}"
+            },
+            {
+              "name": "next_state",
+              "value": "delivered"
+            },
+            {
+              "name": "triggered_by",
+              "value": "delivery"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "trigger-orchestrator",
+      "name": "Trigger Orchestrator",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2840, 180]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 200
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"success\", \"workflow\": \"delivery\", \"project_id\": $json.project_id, \"state\": \"delivered\" } }}"
+      },
+      "id": "respond-webhook",
+      "name": "Respond to Webhook",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [3060, 180]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { error: 'No project data found or project not in approved state', project_id: $('Webhook Trigger').first().json.body?.project_id } }];"
+      },
+      "id": "handle-no-data",
+      "name": "Handle No Data",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [860, 420]
+    },
+    {
+      "parameters": {
+        "options": {
+          "responseCode": 400
+        },
+        "respondWith": "json",
+        "responseBody": "={{ { \"status\": \"error\", \"message\": $json.error } }}"
+      },
+      "id": "respond-error",
+      "name": "Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1080, 420]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          { "node": "Load Project", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Load Project": {
+      "main": [
+        [
+          { "node": "Validate State", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Validate State": {
+      "main": [
+        [
+          { "node": "Check File Size", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Handle No Data", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check File Size": {
+      "main": [
+        [
+          { "node": "Process File Info", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Process File Info": {
+      "main": [
+        [
+          { "node": "Needs Compression?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Needs Compression?": {
+      "main": [
+        [
+          { "node": "Compress Video", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Build Delivery Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Compress Video": {
+      "main": [
+        [
+          { "node": "Build Delivery Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Build Delivery Report": {
+      "main": [
+        [
+          { "node": "Send Video via Telegram", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Video via Telegram": {
+      "main": [
+        [
+          { "node": "Send Quality Report", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Send Quality Report": {
+      "main": [
+        [
+          { "node": "Transition to Delivered", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Transition to Delivered": {
+      "main": [
+        [
+          { "node": "Emit Event", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Emit Event": {
+      "main": [
+        [
+          { "node": "Trigger Orchestrator", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Trigger Orchestrator": {
+      "main": [
+        [
+          { "node": "Respond to Webhook", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Handle No Data": {
+      "main": [
+        [
+          { "node": "Respond Error", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    { "name": "cineos" },
+    { "name": "delivery" },
+    { "name": "production" }
+  ]
+}

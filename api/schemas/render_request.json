@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://cineos.dev/schemas/render_request.json",
+  "title": "Render Request",
+  "description": "Request body for the POST /api/render endpoint. Composes animated clips with audio into a scene video.",
+  "type": "object",
+  "required": ["scene_id"],
+  "properties": {
+    "scene_id": {
+      "type": "string",
+      "description": "Scene this render belongs to."
+    },
+    "animation_ids": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "description": "Ordered list of animation clip IDs to compose into the final clip."
+    },
+    "audio_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Voice narration audio ID to overlay on the video."
+    },
+    "music_id": {
+      "type": "string",
+      "nullable": true,
+      "description": "Background music track ID to mix in."
+    },
+    "music_volume": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1.0,
+      "default": 0.15,
+      "description": "Volume of the background music relative to narration."
+    },
+    "transition": {
+      "type": "string",
+      "enum": ["cut", "fade", "crossfade", "dissolve", "wipe"],
+      "default": "crossfade",
+      "description": "Transition type between animation clips."
+    },
+    "transition_duration": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 3.0,
+      "default": 0.5,
+      "description": "Duration of the transition in seconds."
+    },
+    "output_format": {
+      "type": "string",
+      "enum": ["mp4", "webm"],
+      "default": "mp4",
+      "description": "Video container format."
+    },
+    "resolution": {
+      "type": "string",
+      "enum": ["1280x720", "1920x1080", "3840x2160"],
+      "default": "1920x1080",
+      "description": "Output video resolution."
+    },
+    "codec": {
+      "type": "string",
+      "enum": ["h264", "h265", "vp9"],
+      "default": "h264",
+      "description": "Video codec."
+    },
+    "quality_preset": {
+      "type": "string",
+      "enum": ["draft", "low", "medium", "high", "ultra"],
+      "default": "high",
+      "description": "Encoding quality preset — affects CRF and encoding speed."
+    },
+    "fps": {
+      "type": "integer",
+      "enum": [24, 30, 60],
+      "default": 24,
+      "description": "Frames per second."
+    },
+    "subtitle_text": {
+      "type": "string",
+      "nullable": true,
+      "description": "Optional subtitle/narration text to burn into the video."
+    },
+    "subtitle_style": {
+      "type": "object",
+      "nullable": true,
+      "description": "Subtitle styling options.",
+      "properties": {
+        "font": {
+          "type": "string",
+          "default": "Arial"
+        },
+        "size": {
+          "type": "integer",
+          "minimum": 12,
+          "maximum": 72,
+          "default": 24
+        },
+        "color": {
+          "type": "string",
+          "default": "#FFFFFF"
+        },
+        "outline_color": {
+          "type": "string",
+          "default": "#000000"
+        },
+        "position": {
+          "type": "string",
+          "enum": ["top", "center", "bottom"],
+          "default": "bottom"
+        }
+      }
+    },
+    "callback_url": {
+      "type": "string",
+      "format": "uri",
+      "nullable": true,
+      "description": "URL to POST the result to when render completes."
+    }
+  },
+  "additionalProperties": false,
+  "examples": [
+    {
+      "scene_id": "scn-01H8X9A3B",
+      "animation_ids": ["anim-01H8X9A3B", "anim-01H8X9A3C", "anim-01H8X9A3D"],
+      "audio_id": "aud-01H8X9A3B",
+      "music_id": null,
+      "music_volume": 0.15,
+      "transition": "crossfade",
+      "transition_duration": 0.5,
+      "output_format": "mp4",
+      "resolution": "1920x1080",
+      "codec": "h264",
+      "quality_preset": "high",
+      "fps": 24,
+      "subtitle_text": "The ancient castle stood tall against the crimson sky...",
+      "subtitle_style": {
+        "font": "Arial",
+        "size": 24,
+        "color": "#FFFFFF",
+        "outline_color": "#000000",
+        "position": "bottom"
+      },
+      "callback_url": "https://n8n.cineos.dev/webhook/render_callback"
+    }
+  ]
+}
