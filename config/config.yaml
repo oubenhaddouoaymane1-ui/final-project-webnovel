@@ -44,4 +44,5 @@ logging:
   backup_count: 10
   json_format: false
 telegram:
-  bot_token: "${8844705231:AAHXUbfuy7zZS4v_qRpUInmTlkSi4gVDj28}"
+telegram:
+  bot_token: "8844705231:AAHXUbfuy7zZS4v_qRpUInmTlkSi4gVDj28"
