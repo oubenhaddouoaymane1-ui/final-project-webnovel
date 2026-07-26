@@ -16,7 +16,7 @@ class CineOSTelegramBridge:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.bot_token = config["telegram"]["bot_token"]
+        self.bot_token = config["telegram"]["8844705231:AAHXUbfuy7zZS4v_qRpUInmTlkSi4gVDj28"]
         self.n8n_webhook_base = config.get("n8n", {}).get("webhook_url", "http://localhost:5678/webhook")
         self.application = None
         self._active_projects: Dict[int, str] = {}  # chat_id -> project_id
